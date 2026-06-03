@@ -15,7 +15,7 @@ import logging
 import os
 import time
 import uuid
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, Union
 
 import requests
 
@@ -33,21 +33,25 @@ PRODUCER_URL = os.getenv("SPLINE_PRODUCER_URL", "http://localhost:8080/producer"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def push_lineage_to_spline(
-    tracker: LineageTracker,
+    tracker_or_data: "Union[LineageTracker, dict[str, Any]]",
     integration_name: str = "DataGuard",
 ) -> str | None:
     """
     Build a Spline execution plan from real LineageTracker data and push it.
 
-    Instead of fabricating 1:1 column mappings, this reads the tracker's
-    transformation DAG and creates proper multi-step operation nodes
-    with accurate attribute lineage.
+    Accepts either a LineageTracker instance (calls finalize() internally)
+    or a pre-computed lineage_data dict from tracker.finalize(). Passing
+    the pre-computed dict avoids a redundant finalize() call when the
+    caller has already finalized.
 
     Returns the plan_id on success, None on failure.
     """
     try:
         plan_id = str(uuid.uuid4())
-        lineage_data = tracker.finalize()
+        if isinstance(tracker_or_data, dict):
+            lineage_data = tracker_or_data
+        else:
+            lineage_data = tracker_or_data.finalize()
 
         dataset_lineage = lineage_data.get("dataset_lineage", [])
         if not dataset_lineage:

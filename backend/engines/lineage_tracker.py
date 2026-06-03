@@ -644,6 +644,98 @@ class LineageTracker:
         logger.info("drop: %s", columns)
         return result
 
+    def query_rows(
+        self,
+        df: pd.DataFrame,
+        query_str: str,
+    ) -> pd.DataFrame:
+        """
+        Tracked wrapper for df.query(query_str).
+
+        Records which columns are referenced in the filter expression.
+        Returns the filtered DataFrame.
+        """
+        result = df.query(query_str)
+        self._reregister(df, result)
+
+        # Extract referenced column names from the query string (best-effort)
+        import re
+        referenced = re.findall(r"\b([A-Za-z_]\w*)\b", query_str)
+        cols_affected = [c for c in referenced if c in df.columns]
+        if not cols_affected:
+            cols_affected = df.columns.tolist()
+
+        tracked = self._get_tracked(result)
+        if tracked:
+            for col in cols_affected:
+                if col in tracked.column_transforms:
+                    tracked.column_transforms[col].append(f"filter({query_str[:40]})")
+
+        self._add_transform_step(
+            operation="query",
+            function_name="query",
+            columns_affected=cols_affected,
+            parameters={"query": query_str, "rows_before": len(df), "rows_after": len(result)},
+        )
+
+        logger.info("query: '%s' → %d → %d rows", query_str[:60], len(df), len(result))
+        return result
+
+    def concat_dataframes(
+        self,
+        dfs: list[pd.DataFrame],
+        axis: int = 0,
+        ignore_index: bool = True,
+    ) -> pd.DataFrame:
+        """
+        Tracked wrapper for pd.concat().
+
+        Merges lineage tracking from all source DataFrames into the result.
+        Returns the concatenated DataFrame.
+        """
+        result = pd.concat(dfs, axis=axis, ignore_index=ignore_index)
+
+        # Pick the first tracked source as the primary lineage carrier
+        primary_tracked: "_TrackedDataFrame | None" = None
+        for src_df in dfs:
+            t = self._get_tracked(src_df)
+            if t is not None:
+                primary_tracked = t
+                break
+
+        source_name = primary_tracked.source_dataset if primary_tracked else "concat_source"
+        source_uri = primary_tracked.source_uri if primary_tracked else "concat://internal"
+
+        new_tracked = _TrackedDataFrame(
+            df_id=str(uuid.uuid4()),
+            source_dataset=source_name,
+            source_uri=source_uri,
+            original_columns=result.columns.tolist(),
+            current_columns=result.columns.tolist(),
+            column_transforms={col: ["concat"] for col in result.columns},
+            column_origins={col: col for col in result.columns},
+        )
+
+        # Carry forward transforms from primary source
+        if primary_tracked:
+            for col, transforms in primary_tracked.column_transforms.items():
+                if col in new_tracked.column_transforms:
+                    new_tracked.column_transforms[col] = list(transforms) + ["concat"]
+                if col in primary_tracked.column_origins:
+                    new_tracked.column_origins[col] = primary_tracked.column_origins[col]
+
+        self._dataframes[id(result)] = new_tracked
+
+        self._add_transform_step(
+            operation="concat",
+            function_name="concat",
+            columns_affected=result.columns.tolist(),
+            parameters={"axis": axis, "num_frames": len(dfs), "row_count": len(result)},
+        )
+
+        logger.info("concat: %d DataFrames → %d rows × %d cols", len(dfs), len(result), len(result.columns))
+        return result
+
     def merge_dataframes(
         self,
         left: pd.DataFrame,

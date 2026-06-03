@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, Float, DateTime, Text, JSON, Boolean # type: ignore
+from sqlalchemy import Column, String, Integer, Float, DateTime, Text, JSON, Boolean, Index # type: ignore
 from sqlalchemy.ext.declarative import declarative_base # type: ignore
 from sqlalchemy.sql import func # type: ignore
 import uuid
@@ -143,6 +143,10 @@ class LineageJob(Base):
 class LineageDataset(Base):
     """A source or target dataset tracked by lineage."""
     __tablename__ = "lineage_datasets"
+    __table_args__ = (
+        Index("ix_lineage_datasets_job_id", "job_id"),
+        Index("ix_lineage_datasets_name", "name"),
+    )
     id = Column(String(100), primary_key=True)
     job_id = Column(String(100), nullable=False)
     name = Column(String(255), nullable=False)
@@ -165,6 +169,9 @@ class LineageColumn(Base):
 class LineageTransformation(Base):
     """A transformation operation applied during an ETL job."""
     __tablename__ = "lineage_transformations"
+    __table_args__ = (
+        Index("ix_lineage_transformations_job_id", "job_id"),
+    )
     id = Column(String(100), primary_key=True)
     job_id = Column(String(100), nullable=False)
     name = Column(String(255), nullable=False)
@@ -178,6 +185,14 @@ class LineageTransformation(Base):
 class LineageEdge(Base):
     """A column-to-column lineage edge (source_col → target_col via transformation)."""
     __tablename__ = "lineage_edges"
+    __table_args__ = (
+        # Downstream BFS: find all edges where source_column (+ optional dataset) matches
+        Index("ix_lineage_edges_src_col_ds", "source_column", "source_dataset"),
+        # Upstream BFS: find all edges where target_column (+ optional dataset) matches
+        Index("ix_lineage_edges_tgt_col_ds", "target_column", "target_dataset"),
+        # Job-scoped queries
+        Index("ix_lineage_edges_job_id", "job_id"),
+    )
     id = Column(String(100), primary_key=True)
     job_id = Column(String(100), nullable=False)
     source_dataset = Column(String(255), nullable=False)
@@ -192,6 +207,9 @@ class LineageEdge(Base):
 class LineageExecution(Base):
     """A record of a lineage-tracked pipeline execution."""
     __tablename__ = "lineage_executions"
+    __table_args__ = (
+        Index("ix_lineage_executions_job_id", "job_id"),
+    )
     id = Column(String(100), primary_key=True)
     job_id = Column(String(100), nullable=False)
     pipeline_run_id = Column(String(100))

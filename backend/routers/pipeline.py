@@ -25,7 +25,7 @@ from models import PipelineRun, Integration
 from routers.extraction import extract_schema
 from engines.spline_engine import push_lineage_to_spline
 from engines.lineage_tracker import LineageTracker
-from engines.lineage_persistence import persist_lineage
+from engines.lineage_persistence import persist_lineage, persist_github_lineage
 from integrations_service import get_connection_config, build_connection_url
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -390,6 +390,23 @@ async def _pipeline_sse(integration_id: str, db: Session):  # type: ignore
                 else:
                     yield emit("WARNING", f"Lineage push failed for table '{table}'")
 
+            # Persist GitHub lineage to DB so /lineage/jobs and impact analysis work
+            try:
+                persist_github_lineage(
+                    db=db,
+                    job_name=f"GitHub ETL: {repo}",
+                    integration_id=integration_id,
+                    sources=parsed["sources"],
+                    targets=parsed["targets"],
+                    transformations=parsed["transformations"],
+                    pipeline_run_id=run_id,
+                    spline_plan_ids=plan_ids,
+                )
+                yield emit("INFO", "Lineage metadata saved to database.")
+            except Exception as persist_exc:
+                logger.error("Failed to persist GitHub lineage: %s", persist_exc)
+                yield emit("WARNING", f"Lineage persistence failed: {persist_exc}")
+
             # Finalization
             new_run.status = "completed"  # type: ignore
             new_run.completed_at = datetime.now(timezone.utc)  # type: ignore
@@ -468,9 +485,9 @@ async def _pipeline_sse(integration_id: str, db: Session):  # type: ignore
             # ─ FINALIZE LINEAGE ─
             lineage_result = tracker.finalize()
 
-            # 5. Push real lineage to Spline
+            # 5. Push real lineage to Spline (pass pre-computed dict — avoids double finalize)
             yield emit("INFO", f"Pushing real lineage for '{table}' to Spline...")
-            plan_id = push_lineage_to_spline(tracker, integration_name=str(integration_name))
+            plan_id = push_lineage_to_spline(lineage_result, integration_name=str(integration_name))
             if plan_id:
                 all_plan_ids.append(plan_id)
                 yield emit("OK", f"Lineage for '{table}' pushed (ID: {plan_id})")
