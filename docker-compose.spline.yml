@@ -1,44 +1,82 @@
-version: "3.7"
+version: "3.9"
 
 services:
-  arangodb:
-    image: arangodb:3.11.3
+
+  postgres:
+    image: postgres:16
+    container_name: governance-postgres
+    restart: unless-stopped
     environment:
-      - ARANGO_NO_AUTH=1
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+      POSTGRES_DB: governance
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  mariadb:
+    image: mariadb:11
+    container_name: governance-mariadb
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: root123
+      MARIADB_DATABASE: governance_db
+    ports:
+      - "3307:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+
+  arangodb:
+    image: arangodb:latest
+    container_name: governance-arangodb
+    restart: unless-stopped
+    environment:
+      ARANGO_ROOT_PASSWORD: root123
     ports:
       - "8529:8529"
     volumes:
       - arangodb_data:/var/lib/arangodb3
 
-  spline-rest-server:
-    image: absaoss/spline-rest-server:latest
+  spline-postgres:
+    image: postgres:14
+    container_name: spline-postgres
+    restart: unless-stopped
     environment:
-      - spline.database.connectionUrl=arangodb://arangodb:8529/spline
-      - spline.database.auto-init=true
-      - SPLINE_CORS_ALLOWEDORIGINS=*
-      - SPLINE_REST_CORS_ALLOWEDORIGINS=*
-      - JAVA_OPTS=-Dspline.cors.allowedOrigins=* -Dspline.rest.cors.allowedOrigins=*
+      POSTGRES_USER: spline
+      POSTGRES_PASSWORD: spline
+      POSTGRES_DB: spline
+    ports:
+      - "5433:5432"
+    volumes:
+      - spline_pg_data:/var/lib/postgresql/data
+
+  spline-server:
+    image: absaoss/spline-server:latest
+    container_name: spline-server
+    restart: unless-stopped
+    depends_on:
+      - spline-postgres
     ports:
       - "8080:8080"
-    depends_on:
-      - arangodb
-
-  spline-web-ui:
-    image: absaoss/spline-web-ui:latest
     environment:
-      - SPLINE_CONSUMER_URL=/consumer
-    depends_on:
-      - spline-rest-server
+      SPLINE_DATABASE_CONNECTION_URL: jdbc:postgresql://spline-postgres:5432/spline
+      SPLINE_DATABASE_CONNECTION_USER: spline
+      SPLINE_DATABASE_CONNECTION_PASSWORD: spline
 
-  spline-proxy:
-    image: nginx:alpine
-    ports:
-      - "9090:80"
-    volumes:
-      - ./nginx-spline.conf:/etc/nginx/nginx.conf:ro
+  spline-ui:
+    image: absaoss/spline-web-ui:latest
+    container_name: spline-ui
+    restart: unless-stopped
     depends_on:
-      - spline-web-ui
-      - spline-rest-server
+      - spline-server
+    ports:
+      - "9090:8080"
+    environment:
+      SPLINE_SERVER_URL: http://spline-server:8080
 
 volumes:
+  pgdata:
+  mariadb_data:
   arangodb_data:
+  spline_pg_data:
