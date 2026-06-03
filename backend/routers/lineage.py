@@ -161,103 +161,230 @@ def get_lineage_graph_data(
         if execution and execution.dag_json:
             return execution.dag_json
 
-        # Fallback: build from edges
-        edges = db.query(LineageEdge)
+        # Fallback: build dataset-level graph from edges.
+        # Groups by (source_dataset, target_dataset) pair so we get one operation
+        # node per transformation type — not one per (column, transform) combination.
+        edges_q = db.query(LineageEdge)
         if integration_id:
             job_ids_list = [
                 j.id for j in
                 db.query(LineageJob).filter(LineageJob.integration_id == integration_id).all()
             ]
             if job_ids_list:
-                edges = edges.filter(LineageEdge.job_id.in_(job_ids_list))
+                edges_q = edges_q.filter(LineageEdge.job_id.in_(job_ids_list))
 
-        edge_list = edges.all()
+        edge_list = edges_q.all()
         if not edge_list:
             return {"nodes": [], "edges": []}
 
-        # Build simple graph from edges
         nodes_dict: dict[str, dict[str, Any]] = {}
         graph_edges: list[dict[str, Any]] = []
+        edge_id_counter = 0
 
-        for i, e in enumerate(edge_list):
-            # Source node
-            src_id = f"ds:{e.source_dataset}"
+        # Collect unique (src_ds, tgt_ds) pairs and their distinct transforms + columns
+        pair_transforms: dict[tuple[str, str], set[str]] = {}
+        pair_src_cols: dict[tuple[str, str], list[str]] = {}
+        pair_tgt_cols: dict[tuple[str, str], list[str]] = {}
+
+        for e in edge_list:
+            pair = (e.source_dataset, e.target_dataset)
+            transforms = e.transformations_json or []
+            for t in transforms:
+                pair_transforms.setdefault(pair, set()).add(t)
+            if e.source_column not in pair_src_cols.get(pair, []):
+                pair_src_cols.setdefault(pair, []).append(e.source_column)
+            if e.target_column not in pair_tgt_cols.get(pair, []):
+                pair_tgt_cols.setdefault(pair, []).append(e.target_column)
+
+        # Build dataset and operation nodes per (src, tgt) pair
+        for pair, transforms in pair_transforms.items():
+            src_ds, tgt_ds = pair
+            src_cols = pair_src_cols.get(pair, [])
+            tgt_cols = pair_tgt_cols.get(pair, [])
+
+            src_id = f"ds:{src_ds}"
+            tgt_id = f"ds:{tgt_ds}"
+
             if src_id not in nodes_dict:
                 nodes_dict[src_id] = {
                     "id": src_id,
                     "type": "dataset",
-                    "data": {"label": f"{e.source_dataset} (Source)", "columns": []},
+                    "data": {"label": f"{src_ds} (Source)", "columns": src_cols},
                     "position": {"x": 0, "y": 0},
                 }
-            if e.source_column not in nodes_dict[src_id]["data"]["columns"]:
-                nodes_dict[src_id]["data"]["columns"].append(e.source_column)
+            else:
+                # Merge columns if node already exists
+                existing_cols: list[str] = nodes_dict[src_id]["data"]["columns"]
+                for c in src_cols:
+                    if c not in existing_cols:
+                        existing_cols.append(c)
 
-            # Target node
-            tgt_id = f"ds:{e.target_dataset}"
             if tgt_id not in nodes_dict:
                 nodes_dict[tgt_id] = {
                     "id": tgt_id,
                     "type": "dataset",
-                    "data": {"label": f"{e.target_dataset} (Target)", "columns": []},
-                    "position": {"x": 500, "y": 0},
+                    "data": {"label": f"{tgt_ds} (Target)", "columns": tgt_cols},
+                    "position": {"x": 600, "y": 0},
                 }
-            if e.target_column not in nodes_dict[tgt_id]["data"]["columns"]:
-                nodes_dict[tgt_id]["data"]["columns"].append(e.target_column)
 
-            # Transform nodes from transformations
-            transforms = e.transformations_json or []
-            if transforms:
-                for j, t_name in enumerate(transforms):
-                    op_id = f"op:{e.source_column}:{t_name}"
+            sorted_transforms = sorted(transforms)
+            if sorted_transforms:
+                # One operation node per unique transform across the whole pair
+                prev_node_id = src_id
+                for t_name in sorted_transforms:
+                    op_id = f"op:{src_ds}:{tgt_ds}:{t_name}"
                     if op_id not in nodes_dict:
                         nodes_dict[op_id] = {
                             "id": op_id,
                             "type": "operation",
-                            "data": {
-                                "label": f"{t_name}({e.source_column})",
-                                "operation": t_name,
-                            },
-                            "position": {"x": 250, "y": j * 80},
+                            "data": {"label": t_name, "operation": t_name},
+                            "position": {"x": 300, "y": 0},
                         }
-
-            # Edges
-            if transforms:
-                first_op = f"op:{e.source_column}:{transforms[0]}"
-                graph_edges.append({
-                    "id": f"e-src-{i}-0",
-                    "source": src_id,
-                    "target": first_op,
-                    "data": {"columns": [e.source_column]},
-                })
-                for j in range(1, len(transforms)):
-                    prev_op = f"op:{e.source_column}:{transforms[j-1]}"
-                    curr_op = f"op:{e.source_column}:{transforms[j]}"
                     graph_edges.append({
-                        "id": f"e-op-{i}-{j}",
-                        "source": prev_op,
-                        "target": curr_op,
-                        "data": {"columns": [e.source_column]},
+                        "id": f"e{edge_id_counter}",
+                        "source": prev_node_id,
+                        "target": op_id,
+                        "data": {"columns": src_cols},
                     })
-                last_op = f"op:{e.source_column}:{transforms[-1]}"
+                    edge_id_counter += 1
+                    prev_node_id = op_id
+
                 graph_edges.append({
-                    "id": f"e-tgt-{i}",
-                    "source": last_op,
+                    "id": f"e{edge_id_counter}",
+                    "source": prev_node_id,
                     "target": tgt_id,
-                    "data": {"columns": [e.target_column]},
+                    "data": {"columns": tgt_cols},
                 })
+                edge_id_counter += 1
             else:
+                # No transforms recorded — direct dataset-to-dataset edge
                 graph_edges.append({
-                    "id": f"e-direct-{i}",
+                    "id": f"e{edge_id_counter}",
                     "source": src_id,
                     "target": tgt_id,
-                    "data": {"columns": [e.source_column]},
+                    "data": {"columns": src_cols},
                 })
+                edge_id_counter += 1
 
-        # Layout nodes
         nodes = list(nodes_dict.values())
         _layout_nodes(nodes)
 
         return {"nodes": nodes, "edges": graph_edges}
+
+    finally:
+        db.close()
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GET /lineage/columns/{column_name}/graph — Column-specific lineage subgraph
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@router.get("/columns/{column_name}/graph")
+def get_column_lineage_graph(
+    column_name: str,
+    dataset: Optional[str] = Query(None, description="Narrow to a specific dataset"),
+) -> dict[str, Any]:
+    """
+    Return a React Flow-compatible subgraph showing the full lineage path for
+    a specific column — both upstream dependencies and downstream consumers.
+
+    Useful for column-level drill-down in the UI.
+    """
+    if not is_db_available():
+        return {"nodes": [], "edges": [], "column": column_name}
+
+    db = SessionLocal()
+    try:
+        # Collect all edges that reference this column (as source or target)
+        q = db.query(LineageEdge).filter(
+            (LineageEdge.source_column == column_name) |
+            (LineageEdge.target_column == column_name)
+        )
+        if dataset:
+            q = q.filter(
+                (LineageEdge.source_dataset == dataset) |
+                (LineageEdge.target_dataset == dataset)
+            )
+
+        edges = q.all()
+        if not edges:
+            return {"nodes": [], "edges": [], "column": column_name, "dataset": dataset}
+
+        nodes_dict: dict[str, dict[str, Any]] = {}
+        graph_edges: list[dict[str, Any]] = []
+        edge_counter = 0
+
+        def ensure_dataset_node(ds_name: str, role: str) -> str:
+            node_id = f"ds:{ds_name}"
+            if node_id not in nodes_dict:
+                nodes_dict[node_id] = {
+                    "id": node_id,
+                    "type": "dataset",
+                    "data": {"label": f"{ds_name} ({role})", "columns": []},
+                    "position": {"x": 0, "y": 0},
+                }
+            return node_id
+
+        def ensure_column_node(ds_name: str, col_name: str, highlighted: bool) -> str:
+            node_id = f"col:{ds_name}:{col_name}"
+            if node_id not in nodes_dict:
+                nodes_dict[node_id] = {
+                    "id": node_id,
+                    "type": "column",
+                    "data": {
+                        "label": f"{col_name}",
+                        "dataset": ds_name,
+                        "highlighted": highlighted,
+                    },
+                    "position": {"x": 0, "y": 0},
+                }
+            return node_id
+
+        for e in edges:
+            is_src = e.source_column == column_name
+            is_tgt = e.target_column == column_name
+
+            ensure_dataset_node(e.source_dataset, "Source")
+            ensure_dataset_node(e.target_dataset, "Target")
+            src_col_id = ensure_column_node(e.source_dataset, e.source_column, is_src)
+            tgt_col_id = ensure_column_node(e.target_dataset, e.target_column, is_tgt)
+
+            transforms = e.transformations_json or []
+            prev_id = src_col_id
+
+            for t_name in transforms:
+                op_id = f"op:{e.source_dataset}:{e.source_column}:{t_name}"
+                if op_id not in nodes_dict:
+                    nodes_dict[op_id] = {
+                        "id": op_id,
+                        "type": "operation",
+                        "data": {"label": t_name, "operation": t_name},
+                        "position": {"x": 0, "y": 0},
+                    }
+                graph_edges.append({
+                    "id": f"e{edge_counter}",
+                    "source": prev_id,
+                    "target": op_id,
+                })
+                edge_counter += 1
+                prev_id = op_id
+
+            graph_edges.append({
+                "id": f"e{edge_counter}",
+                "source": prev_id,
+                "target": tgt_col_id,
+            })
+            edge_counter += 1
+
+        nodes = list(nodes_dict.values())
+        _layout_nodes(nodes)
+
+        return {
+            "column": column_name,
+            "dataset": dataset,
+            "nodes": nodes,
+            "edges": graph_edges,
+        }
 
     finally:
         db.close()
