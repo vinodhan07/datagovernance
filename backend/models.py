@@ -124,3 +124,81 @@ class Transaction(Base):
     amount = Column(Float)
     status = Column(String(50))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Lineage Models
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class LineageJob(Base):
+    """An ETL job definition that produces lineage."""
+    __tablename__ = "lineage_jobs"
+    id = Column(String(100), primary_key=True)
+    name = Column(String(255), nullable=False)
+    integration_id = Column(String(100))
+    job_type = Column(String(50), default="etl")   # "etl", "github", "csv"
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class LineageDataset(Base):
+    """A source or target dataset tracked by lineage."""
+    __tablename__ = "lineage_datasets"
+    id = Column(String(100), primary_key=True)
+    job_id = Column(String(100), nullable=False)
+    name = Column(String(255), nullable=False)
+    uri = Column(Text)
+    dataset_type = Column(String(20), nullable=False)  # "source" | "target"
+    columns_json = Column(JSON)  # list of column names
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class LineageColumn(Base):
+    """An individual column within a tracked dataset."""
+    __tablename__ = "lineage_columns"
+    id = Column(String(100), primary_key=True)
+    dataset_id = Column(String(100), nullable=False)
+    name = Column(String(255), nullable=False)
+    data_type = Column(String(100))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class LineageTransformation(Base):
+    """A transformation operation applied during an ETL job."""
+    __tablename__ = "lineage_transformations"
+    id = Column(String(100), primary_key=True)
+    job_id = Column(String(100), nullable=False)
+    name = Column(String(255), nullable=False)
+    operation_type = Column(String(100), nullable=False)
+    parameters_json = Column(JSON)
+    order_index = Column(Integer, default=0)
+    columns_affected = Column(JSON)  # list of column names
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class LineageEdge(Base):
+    """A column-to-column lineage edge (source_col → target_col via transformation)."""
+    __tablename__ = "lineage_edges"
+    id = Column(String(100), primary_key=True)
+    job_id = Column(String(100), nullable=False)
+    source_dataset = Column(String(255), nullable=False)
+    source_column = Column(String(255), nullable=False)
+    target_dataset = Column(String(255), nullable=False)
+    target_column = Column(String(255), nullable=False)
+    transformation_id = Column(String(100))
+    transformations_json = Column(JSON)  # list of transform names
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class LineageExecution(Base):
+    """A record of a lineage-tracked pipeline execution."""
+    __tablename__ = "lineage_executions"
+    id = Column(String(100), primary_key=True)
+    job_id = Column(String(100), nullable=False)
+    pipeline_run_id = Column(String(100))
+    started_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
+    status = Column(String(20), default="completed")
+    lineage_json = Column(JSON)          # full lineage tracker output
+    dag_json = Column(JSON)              # DAG nodes + edges
+    spline_plan_id = Column(String(100))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

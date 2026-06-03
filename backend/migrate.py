@@ -193,6 +193,93 @@ migrations = [
     "CREATE INDEX IF NOT EXISTS idx_audit_event      ON audit_logs(event_type);",
     "CREATE INDEX IF NOT EXISTS idx_audit_integration ON audit_logs(integration_id);",
     "CREATE INDEX IF NOT EXISTS idx_catalog_int      ON catalog_scan_results(integration_id);",
+
+    # ── Lineage tables ────────────────────────────────────────────────────────
+
+    """
+    CREATE TABLE IF NOT EXISTS lineage_jobs (
+        id               VARCHAR(100) PRIMARY KEY,
+        name             VARCHAR(255) NOT NULL,
+        integration_id   VARCHAR(100),
+        job_type         VARCHAR(50)  DEFAULT 'etl',
+        created_at       TIMESTAMPTZ  DEFAULT NOW()
+    );
+    """,
+
+    """
+    CREATE TABLE IF NOT EXISTS lineage_datasets (
+        id               VARCHAR(100) PRIMARY KEY,
+        job_id           VARCHAR(100) NOT NULL,
+        name             VARCHAR(255) NOT NULL,
+        uri              TEXT,
+        dataset_type     VARCHAR(20)  NOT NULL,
+        columns_json     JSONB,
+        created_at       TIMESTAMPTZ  DEFAULT NOW()
+    );
+    """,
+
+    """
+    CREATE TABLE IF NOT EXISTS lineage_columns (
+        id               VARCHAR(100) PRIMARY KEY,
+        dataset_id       VARCHAR(100) NOT NULL,
+        name             VARCHAR(255) NOT NULL,
+        data_type        VARCHAR(100),
+        created_at       TIMESTAMPTZ  DEFAULT NOW()
+    );
+    """,
+
+    """
+    CREATE TABLE IF NOT EXISTS lineage_transformations (
+        id               VARCHAR(100) PRIMARY KEY,
+        job_id           VARCHAR(100) NOT NULL,
+        name             VARCHAR(255) NOT NULL,
+        operation_type   VARCHAR(100) NOT NULL,
+        parameters_json  JSONB,
+        order_index      INTEGER      DEFAULT 0,
+        columns_affected JSONB,
+        created_at       TIMESTAMPTZ  DEFAULT NOW()
+    );
+    """,
+
+    """
+    CREATE TABLE IF NOT EXISTS lineage_edges (
+        id                   VARCHAR(100) PRIMARY KEY,
+        job_id               VARCHAR(100) NOT NULL,
+        source_dataset       VARCHAR(255) NOT NULL,
+        source_column        VARCHAR(255) NOT NULL,
+        target_dataset       VARCHAR(255) NOT NULL,
+        target_column        VARCHAR(255) NOT NULL,
+        transformation_id    VARCHAR(100),
+        transformations_json JSONB,
+        created_at           TIMESTAMPTZ  DEFAULT NOW()
+    );
+    """,
+
+    """
+    CREATE TABLE IF NOT EXISTS lineage_executions (
+        id               VARCHAR(100) PRIMARY KEY,
+        job_id           VARCHAR(100) NOT NULL,
+        pipeline_run_id  VARCHAR(100),
+        started_at       TIMESTAMPTZ,
+        completed_at     TIMESTAMPTZ,
+        status           VARCHAR(20)  DEFAULT 'completed',
+        lineage_json     JSONB,
+        dag_json         JSONB,
+        spline_plan_id   VARCHAR(100),
+        created_at       TIMESTAMPTZ  DEFAULT NOW()
+    );
+    """,
+
+    # ── Lineage indexes ───────────────────────────────────────────────────────
+    "CREATE INDEX IF NOT EXISTS idx_lineage_jobs_int     ON lineage_jobs(integration_id);",
+    "CREATE INDEX IF NOT EXISTS idx_lineage_ds_job       ON lineage_datasets(job_id);",
+    "CREATE INDEX IF NOT EXISTS idx_lineage_col_ds       ON lineage_columns(dataset_id);",
+    "CREATE INDEX IF NOT EXISTS idx_lineage_xform_job    ON lineage_transformations(job_id);",
+    "CREATE INDEX IF NOT EXISTS idx_lineage_edge_job     ON lineage_edges(job_id);",
+    "CREATE INDEX IF NOT EXISTS idx_lineage_edge_src     ON lineage_edges(source_dataset, source_column);",
+    "CREATE INDEX IF NOT EXISTS idx_lineage_edge_tgt     ON lineage_edges(target_dataset, target_column);",
+    "CREATE INDEX IF NOT EXISTS idx_lineage_exec_job     ON lineage_executions(job_id);",
+    "CREATE INDEX IF NOT EXISTS idx_lineage_exec_run     ON lineage_executions(pipeline_run_id);",
 ]
 
 
