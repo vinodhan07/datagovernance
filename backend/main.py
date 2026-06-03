@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware # type: ignore
 from routers import (
     audit, catalog, connectors, data_quality, 
-    extraction, lineage, pipeline, scanner
+    extraction, impact, lineage, pipeline, scanner
 )
 
 app = FastAPI(title="DataGuard Governance Platform")
@@ -22,6 +22,7 @@ app.include_router(audit.router, prefix="/audit", tags=["Audit"])
 app.include_router(catalog.router, prefix="/catalog", tags=["Catalog"])
 app.include_router(connectors.router, prefix="/connectors", tags=["Connectors"])
 app.include_router(data_quality.router, prefix="/data-quality", tags=["Quality"])
+app.include_router(impact.router, prefix="/impact", tags=["Impact"])
 app.include_router(lineage.router, prefix="/lineage", tags=["Lineage"])
 app.include_router(pipeline.router, prefix="/pipeline", tags=["Pipeline"])
 app.include_router(scanner.router, prefix="/scanner", tags=["Scanner"])
