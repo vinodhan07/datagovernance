@@ -1,0 +1,42 @@
+order_id,customer_name,email,amount,order_date,status
+ORD1001,Arun Kumar,arun@gmail.com,500.00,2024-02-01,completed
+ORD1002,Priya Sharma,priya@yahoo.com,1200.50,2024-02-02,completed
+ORD1003,Rahul,rahul#gmail.com,300.00,2024-02-03,completed
+ORD1004,Sneha,(NULL),450.00,2024-02-04,pending
+ORD1005,Karthik,karthik@gmail.com,-200.00,2024-02-05,completed
+ORD1006,Meena,meena@gmail.com,800.00,(NULL),completed
+ORD1007,Vikram,vikramgmail.com,-50.00,(NULL),pending
+ORD1008,Amit Singh,amit.singh@gmail.com,150.00,2024-02-06,completed
+ORD1009,Sonia Jain,sonia#jain.com,2200.00,2024-02-07,completed
+ORD1010,Ravi Teja,raviteja@gmail.com,95.00,2024-02-08,pending
+ORD1011,Anjali Rao,anjali.rao@gmail.com,670.00,2024-02-09,completed
+ORD1012,Deepak Lal,deepaklal@yahoo.com,340.00,2024-02-10,completed
+ORD1013,Neha Roy,neharoy@gmail.com,1100.00,2024-02-11,completed
+ORD1014,Suresh Babu,suresh.babu@gmail.com,560.00,2024-02-12,pending
+ORD1015,Pooja Hegde,pooja#hegde.com,120.00,2024-02-13,completed
+ORD1016,Vijay Kumar,vijaykumar@gmail.com,890.00,2024-02-14,completed
+ORD1017,Kavita Devi,kavita.devi@gmail.com,430.00,2024-02-15,completed
+ORD1018,Manish Jha,manishjha@yahoo.com,210.00,2024-02-16,pending
+ORD1019,Ritu Singh,ritu.singh@gmail.com,780.00,2024-02-17,completed
+ORD1020,Sanjay Dutt,sanjay#dutt.com,1050.00,2024-02-18,completed
+ORD1021,Tina Fey,tinafey@gmail.com,600.00,2024-02-19,completed
+ORD1022,Raj Kundra,rajkundra@gmail.com,1250.00,2024-02-20,pending
+ORD1023,Simran Kaur,simrankaur@yahoo.com,450.00,2024-02-21,completed
+ORD1024,Akshay Kumar,akshay#kumar.com,320.00,2024-02-22,completed
+ORD1025,Hrithik Roshan,hrithik@gmail.com,800.00,2024-02-23,completed
+ORD1026,Salman Khan,salmankhan@gmail.com,1500.00,2024-02-24,pending
+ORD1027,Shahrukh Khan,srk#gmail.com,1800.00,2024-02-25,completed
+ORD1028,Aamir Khan,aamir@yahoo.com,2000.00,2024-02-26,completed
+ORD1029,Saif Ali,saif#ali.com,900.00,2024-02-27,completed
+ORD1030,Kareena Kapoor,kareena@gmail.com,1100.00,2024-02-28,pending
+ORD1031,Ranbir Kapoor,ranbir@gmail.com,1300.00,2024-03-01,completed
+ORD1032,Alia Bhatt,alia#bhatt.com,1400.00,2024-03-02,completed
+ORD1033,Varun Dhawan,varun@yahoo.com,700.00,2024-03-03,completed
+ORD1034,Siddharth M,sid#gmail.com,600.00,2024-03-04,pending
+ORD1035,Kiara Advani,kiara@gmail.com,950.00,2024-03-05,completed
+ORD1036,Katrina Kaif,katrina@yahoo.com,1200.00,2024-03-06,completed
+ORD1037,Vicky Kaushal,vicky#kaushal.com,850.00,2024-03-07,completed
+ORD1038,Ranveer Singh,ranveer@gmail.com,1600.00,2024-03-08,pending
+ORD1039,Deepika P,deepika#p.com,1700.00,2024-03-09,completed
+ORD1040,Priyanka C,priyanka@yahoo.com,2500.00,2024-03-10,completed
+ORD1001,Arun Kumar,arun@gmail.com,500.00,2024-02-01,completed

@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+.venv/
+backend/.venv/
+
+# Environment Secrets
+.env
+backend/.env
+.env.local
+.env.*.local
+
+# Python Build & Caches
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+build/
+dist/
+wheels/
+
+# IDE Settings
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# OS Files
+Thumbs.db
+db.properties
+.DS_Store

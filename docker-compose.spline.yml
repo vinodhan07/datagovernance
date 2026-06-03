@@ -1,0 +1,44 @@
+version: "3.7"
+
+services:
+  arangodb:
+    image: arangodb:3.11.3
+    environment:
+      - ARANGO_NO_AUTH=1
+    ports:
+      - "8529:8529"
+    volumes:
+      - arangodb_data:/var/lib/arangodb3
+
+  spline-rest-server:
+    image: absaoss/spline-rest-server:latest
+    environment:
+      - spline.database.connectionUrl=arangodb://arangodb:8529/spline
+      - spline.database.auto-init=true
+      - SPLINE_CORS_ALLOWEDORIGINS=*
+      - SPLINE_REST_CORS_ALLOWEDORIGINS=*
+      - JAVA_OPTS=-Dspline.cors.allowedOrigins=* -Dspline.rest.cors.allowedOrigins=*
+    ports:
+      - "8080:8080"
+    depends_on:
+      - arangodb
+
+  spline-web-ui:
+    image: absaoss/spline-web-ui:latest
+    environment:
+      - SPLINE_CONSUMER_URL=/consumer
+    depends_on:
+      - spline-rest-server
+
+  spline-proxy:
+    image: nginx:alpine
+    ports:
+      - "9090:80"
+    volumes:
+      - ./nginx-spline.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - spline-web-ui
+      - spline-rest-server
+
+volumes:
+  arangodb_data:
