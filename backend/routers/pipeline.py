@@ -83,9 +83,9 @@ def _target_jdbc() -> str:
     return f"jdbc:postgresql://{host}:{port}/{config.TARGET_DB}"
 
 
-def _source_jdbc() -> str:
+def _source_jdbc(creds: dict) -> str:
     """JDBC URL pointing to the MariaDB source DB."""
-    return f"jdbc:mysql://{config.MARIADB_HOST}:{config.MARIADB_PORT}/{config.MARIADB_DB}?permitMysqlScheme"
+    return f"jdbc:mysql://{creds['host']}:{creds['port']}/{creds['database']}?permitMysqlScheme"
 
 
 # ── Schema discovery (Python — fast, no Spark needed) ────────────────────────
@@ -228,7 +228,7 @@ async def _mariadb_pipeline(integration_id: str, db: Session):
         yield _event("OK", "Spark ready — Spline Agent capturing column lineage")
 
         # ── ETL per table ─────────────────────────────────────────────────────
-        source_jdbc = _source_jdbc()
+        source_jdbc = _source_jdbc(creds)
         target_jdbc = _target_jdbc()
         user, pw, _, _, _ = _pg_parts()
         row_counts: dict[str, int] = {}
@@ -337,15 +337,31 @@ async def _github_pipeline(integration_id: str, db: Session, integration: Integr
             tmp.write(script)
             tmp_path = tmp.name
 
-        # Pass all DB connection values from config so script doesn't need them hardcoded
+        # Try to find a MariaDB integration in the database to pass dynamic credentials to the script
+        mariadb_integration = db.query(Integration).filter(Integration.provider == "MariaDB").first()
+        if mariadb_integration:
+            m_creds = get_connection_config(db, mariadb_integration.id) or {}
+            m_host = m_creds.get("host") or config.MARIADB_HOST
+            m_port = str(m_creds.get("port") or config.MARIADB_PORT)
+            m_db   = m_creds.get("database") or config.MARIADB_DB
+            m_user = m_creds.get("user") or config.MARIADB_USER
+            m_pass = m_creds.get("password") or config.MARIADB_PASS
+        else:
+            m_host = config.MARIADB_HOST
+            m_port = str(config.MARIADB_PORT)
+            m_db   = config.MARIADB_DB
+            m_user = config.MARIADB_USER
+            m_pass = config.MARIADB_PASS
+
+        # Pass all DB connection values dynamically so script doesn't need them hardcoded
         env = {
             **os.environ,
             "JDK_JAVA_OPTIONS":   "--add-opens=java.base/sun.net.www.protocol.jar=ALL-UNNAMED",
-            "MARIADB_HOST":        config.MARIADB_HOST,
-            "MARIADB_PORT":        str(config.MARIADB_PORT),
-            "MARIADB_DB":          config.MARIADB_DB,
-            "MARIADB_USER":        config.MARIADB_USER,
-            "MARIADB_PASS":        config.MARIADB_PASS,
+            "MARIADB_HOST":        m_host,
+            "MARIADB_PORT":        m_port,
+            "MARIADB_DB":          m_db,
+            "MARIADB_USER":        m_user,
+            "MARIADB_PASS":        m_pass,
             "POSTGRES_URL":        config.POSTGRES_URL,
             "SPLINE_PRODUCER_URL": config.SPLINE_PRODUCER,
         }

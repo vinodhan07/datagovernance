@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Loader, Database, RotateCcw } from 'lucide-react'
 import Badge from '../components/Badge.jsx'
-import DataExplorer from './panels/DataExplorer.jsx'
+
 import PipelineTerminal from '../components/PipelineTerminal.jsx'
 import LineageGraph from '../components/LineageGraph.jsx'
 import AuditTimeline from '../components/AuditTimeline.jsx'
@@ -276,10 +276,6 @@ export default function EvidenceBoard() {
                   <LineageGraph integrationId={selected.id} />
                 </Section>
 
-                {/* 2. Catalog — Table Explorer */}
-                <Section icon="🗂️" label="Data Catalog & Schema">
-                  <Catalog integrationId={selected.id} />
-                </Section>
 
                 {/* 3. Audit Log — Compliance Tracking */}
                 <Section icon="📋" label="Governance Audit History">

@@ -15,11 +15,11 @@ TARGET_DB    = os.getenv("TARGET_DB_NAME", "company_data")   # ETL output DB
 
 # ── MariaDB (source data) ─────────────────────────────────────────────────────
 # Docker exposes MariaDB on host port 3307 → container port 3306
-MARIADB_HOST = os.getenv("MARIADB_HOST", "127.0.0.1")
-MARIADB_PORT = int(os.getenv("MARIADB_PORT", "3307"))
-MARIADB_DB   = os.getenv("MARIADB_DB",   "governance_db")
-MARIADB_USER = os.getenv("MARIADB_USER", "root")
-MARIADB_PASS = os.getenv("MARIADB_PASS", "root123")
+MARIADB_HOST = os.getenv("MARIADB_HOST", "")
+MARIADB_PORT = int(os.getenv("MARIADB_PORT", "0"))
+MARIADB_DB   = os.getenv("MARIADB_DB",   "")
+MARIADB_USER = os.getenv("MARIADB_USER", "")
+MARIADB_PASS = os.getenv("MARIADB_PASS", "")
 
 # ── Spline (lineage stack) ────────────────────────────────────────────────────
 SPLINE_PRODUCER = os.getenv("SPLINE_PRODUCER_URL", "http://localhost:8080/producer")
