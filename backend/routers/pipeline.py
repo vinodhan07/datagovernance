@@ -85,7 +85,7 @@ def _target_jdbc() -> str:
 
 def _source_jdbc() -> str:
     """JDBC URL pointing to the MariaDB source DB."""
-    return f"jdbc:mariadb://{config.MARIADB_HOST}:{config.MARIADB_PORT}/{config.MARIADB_DB}"
+    return f"jdbc:mysql://{config.MARIADB_HOST}:{config.MARIADB_PORT}/{config.MARIADB_DB}?permitMysqlScheme"
 
 
 # ── Schema discovery (Python — fast, no Spark needed) ────────────────────────
@@ -308,6 +308,10 @@ async def _github_pipeline(integration_id: str, db: Session, integration: Integr
         # Patch Scala companion-object syntax illegal in Python:
         # init_cls.MODULE$.method() → getattr(init_cls, "MODULE$").method()
         script = re.sub(r'(\w+)\.MODULE\$\.(\w+)\(', r'getattr(\1, "MODULE$").\2(', resp.text)
+        # Patch jdbc:mariadb to jdbc:mysql with permitMysqlScheme to fix PySpark decoding issues
+        script = script.replace("jdbc:mariadb://", "jdbc:mysql://")
+        script = script.replace("/{MARIADB_DB}\"", "/{MARIADB_DB}?permitMysqlScheme\"")
+        script = script.replace("/{MARIADB_DB}'", "/{MARIADB_DB}?permitMysqlScheme'")
         yield _event("OK", f"Script downloaded ({len(script)} bytes)")
 
         # ── Create run record ─────────────────────────────────────────────────
