@@ -1,75 +1,92 @@
+"""
+integrations_service.py — Credential encryption, storage, and retrieval.
+Only MariaDB connectors are supported.
+"""
+import uuid
+from urllib.parse import quote_plus
+
 from sqlalchemy.orm import Session
+
 from models import Integration
 from security import encrypt_password, decrypt_password
-import uuid
 
-def save_integration(db: Session, data: dict, provider: str, category: str = "database", name: str | None = None): # type: ignore
-    """
-    Encrypts password/token and saves integration to PostgreSQL.
-    """
-    password_val = data.get("password", "") or data.get("token", "")
-    encrypted_pw = encrypt_password(password_val)
 
-    new_integration = Integration(
-        id=str(uuid.uuid4()),
-        name=name or data.get("name") or "Unnamed",
-        provider=provider,
-        category=category,
-        host=data.get("host") or data.get("filepath"),
-        port=data.get("port"),
-        database_name=data.get("database") or data.get("repo"),
-        username=data.get("user") or data.get("owner"),
-        password_encrypted=encrypted_pw,
-        ssl_mode=data.get("ssl") or data.get("branch") or "disable"
-    )
-    
-    db.add(new_integration)
+def save_integration(db: Session, data: dict, provider: str = "MariaDB",
+                     category: str = "database", name: str | None = None) -> Integration:
+    """Encrypt password/token and persist a new integration to PostgreSQL."""
+    # MariaDB uses "password"; GitHub uses "token"
+    secret = data.get("password") or data.get("token") or ""
+    encrypted_pw = encrypt_password(secret)
+
+    if provider == "GitHub":
+        integration = Integration(
+            id=str(uuid.uuid4()),
+            name=name or data.get("name") or "Unnamed",
+            provider=provider,
+            category=category,
+            host=data.get("filepath"),       # reuse host column for filepath
+            port=None,
+            database_name=data.get("repo"),  # reuse database_name for repo
+            username=data.get("owner"),      # reuse username for owner
+            password_encrypted=encrypted_pw,
+            ssl_mode=data.get("branch") or "main",  # reuse ssl_mode for branch
+        )
+    else:
+        integration = Integration(
+            id=str(uuid.uuid4()),
+            name=name or data.get("name") or "Unnamed",
+            provider=provider,
+            category=category,
+            host=data.get("host"),
+            port=data.get("port"),
+            database_name=data.get("database"),
+            username=data.get("user"),
+            password_encrypted=encrypted_pw,
+            ssl_mode=data.get("ssl") or "disable",
+        )
+
+    db.add(integration)
     db.commit()
-    db.refresh(new_integration)
-    return new_integration
+    db.refresh(integration)
+    return integration
 
-def get_connection_config(db: Session, integration_id: str): # type: ignore
-    """
-    Fetches integration from DB and decrypts password.
-    """
+
+def get_connection_config(db: Session, integration_id: str) -> dict | None:
+    """Fetch and decrypt credentials for an integration."""
     integration = db.query(Integration).filter(Integration.id == integration_id).first()
     if not integration:
         return None
-        
-    password_decrypted = decrypt_password(str(integration.password_encrypted))
-    
+
+    secret = decrypt_password(str(integration.password_encrypted))
+
     if integration.provider == "GitHub":
         return {
-            "owner": integration.username,
-            "repo": integration.database_name,
-            "filepath": integration.host,
-            "branch": integration.ssl_mode,
-            "token": password_decrypted
+            "owner":    (integration.username or "").strip(),
+            "repo":     (integration.database_name or "").strip(),
+            "filepath": (integration.host or "").strip(),
+            "branch":   (integration.ssl_mode or "main").strip(),
+            "token":    secret,
         }
-        
+
     return {
-        "host": integration.host,
-        "port": integration.port,
+        "host":     integration.host,
+        "port":     integration.port,
         "database": integration.database_name,
-        "user": integration.username, # Note: user instead of username to match current creds usage
-        "password": password_decrypted,
-        "ssl": integration.ssl_mode
+        "user":     integration.username,
+        "password": secret,
+        "ssl":      integration.ssl_mode,
     }
 
-from urllib.parse import quote_plus
 
-def build_connection_url(config: dict):
-    """
-    Builds SQLAlchemy connection string from config.
-    """
-    user = quote_plus(str(config.get('user', '')))
-    password = quote_plus(str(config.get('password', '')))
-    host = config.get('host', 'localhost')
-    port = config.get('port', 3306)
-    database = config.get('database', '')
-    
-    url = f"mysql+pymysql://{user}:{password}@{host}:{port}/{database}"
-    ssl_mode = config.get("ssl", "disable")
+def build_connection_url(creds: dict) -> str:
+    """Build a SQLAlchemy mysql+pymysql URL from a credentials dict."""
+    user     = quote_plus(str(creds.get("user",     "")))
+    password = quote_plus(str(creds.get("password", "")))
+    host     = creds.get("host")     or "localhost"
+    port     = creds.get("port")     or 3306
+    database = creds.get("database") or ""
+    url      = f"mysql+pymysql://{user}:{password}@{host}:{port}/{database}"
+    ssl_mode = creds.get("ssl", "disable")
     if ssl_mode and ssl_mode != "disable":
         url += "?ssl_disabled=false"
     return url

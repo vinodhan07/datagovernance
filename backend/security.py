@@ -1,33 +1,24 @@
-import os
+"""
+security.py — Fernet encryption for stored connector passwords/tokens.
+"""
 from cryptography.fernet import Fernet
-from dotenv import load_dotenv
+import config
 
-load_dotenv()
-
-_key = os.getenv("ENCRYPTION_KEY")
-
-if not _key:
+if not config.ENCRYPTION_KEY:
     raise RuntimeError(
-        "\n\nENCRYPTION_KEY is not set in backend/.env\n"
-        "Generate a stable key once and add it:\n\n"
-        "  python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"\n\n"
-        "Then add to backend/.env:\n"
-        "  ENCRYPTION_KEY=<paste-key-here>\n"
+        "ENCRYPTION_KEY missing in backend/.env\n"
+        "Generate: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
     )
 
-_cipher = Fernet(_key.encode())
+_cipher = Fernet(config.ENCRYPTION_KEY.encode())
 
 
 def encrypt_password(password: str) -> str:
-    if not password:
-        return ""
-    return _cipher.encrypt(password.encode()).decode()
+    return _cipher.encrypt(password.encode()).decode() if password else ""
 
 
-def decrypt_password(enc_password: str) -> str:
-    if not enc_password:
-        return ""
+def decrypt_password(enc: str) -> str:
     try:
-        return _cipher.decrypt(enc_password.encode()).decode()
+        return _cipher.decrypt(enc.encode()).decode() if enc else ""
     except Exception:
         return ""

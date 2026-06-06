@@ -1,14 +1,10 @@
 import os
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware # type: ignore
-from routers import (
-    audit, catalog, connectors, data_quality, 
-    extraction, impact, lineage, pipeline, scanner
-)
+from fastapi.middleware.cors import CORSMiddleware
+from routers import audit, connectors, lineage, pipeline
 
-app = FastAPI(title="DataGuard Governance Platform")
+app = FastAPI(title="DataGuard ETL Lineage Platform")
 
-# CORS Configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,50 +13,48 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include Routers
-app.include_router(audit.router, prefix="/audit", tags=["Audit"])
-app.include_router(catalog.router, prefix="/catalog", tags=["Catalog"])
+app.include_router(audit.router,      prefix="/audit",      tags=["Audit"])
 app.include_router(connectors.router, prefix="/connectors", tags=["Connectors"])
-app.include_router(data_quality.router, prefix="/data-quality", tags=["Quality"])
-app.include_router(impact.router, prefix="/impact", tags=["Impact"])
-app.include_router(lineage.router, prefix="/lineage", tags=["Lineage"])
-app.include_router(pipeline.router, prefix="/pipeline", tags=["Pipeline"])
-app.include_router(scanner.router, prefix="/scanner", tags=["Scanner"])
+app.include_router(lineage.router,    prefix="/lineage",    tags=["Lineage"])
+app.include_router(pipeline.router,   prefix="/pipeline",   tags=["Pipeline"])
+
 
 @app.get("/")
 async def root():
-    return {"message": "DataGuard API is online"}
+    return {"message": "DataGuard ETL Lineage API is online"}
+
 
 @app.get("/dashboard/stats")
 async def dashboard_stats():
-    from store import list_integrations, list_rules
+    from store import list_integrations
     from database import SessionLocal, is_db_available
-    from models import QualityScanResult
-    
+    from models import PipelineRun
+
     integrations = list_integrations()
-    rules = list_rules()
-    quality_score = 100.0
-    
+    recent_runs = []
+
     if is_db_available():
         db = SessionLocal()
         try:
-            latest = (
-                db.query(QualityScanResult.score)
-                .order_by(QualityScanResult.scanned_at.desc())
-                .limit(50)
+            recent_runs = (
+                db.query(PipelineRun)
+                .order_by(PipelineRun.started_at.desc())
+                .limit(10)
                 .all()
             )
-            if latest:
-                scores = [r.score for r in latest]
-                quality_score = round(sum(scores) / len(scores), 1)
         finally:
             db.close()
-            
+
+    completed = sum(1 for r in recent_runs if r.status == "completed")
+    failed    = sum(1 for r in recent_runs if r.status == "failed")
+
     return {
         "integrations": len(integrations),
-        "quality_rules": len(rules),
-        "quality_score": quality_score,
+        "pipeline_runs": len(recent_runs),
+        "completed_runs": completed,
+        "failed_runs": failed,
     }
+
 
 if __name__ == "__main__":
     import uvicorn

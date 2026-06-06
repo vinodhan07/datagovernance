@@ -1,12 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { Loader, Database, RotateCcw } from 'lucide-react'
 import Badge from '../components/Badge.jsx'
-import Catalog from './panels/Catalog.jsx'
 import DataExplorer from './panels/DataExplorer.jsx'
 import PipelineTerminal from '../components/PipelineTerminal.jsx'
 import LineageGraph from '../components/LineageGraph.jsx'
 import AuditTimeline from '../components/AuditTimeline.jsx'
-import CatalogSnapshot from '../components/CatalogSnapshot.jsx'
 import { getIntegrations } from '../api/client.js'
 
 // ── Section with heading ──────────────────────────────────────────────────────

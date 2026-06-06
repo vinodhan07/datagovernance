@@ -556,8 +556,9 @@ def get_spline_graph_url(
     if not run or not run.spline_plan_id:
         return {"spline_url": None, "last_run": None}
 
-    spline_web_ui_url = os.getenv("SPLINE_WEB_UI_URL", "http://localhost:9090")
-    consumer_url = os.getenv("SPLINE_CONSUMER_URL", "http://localhost:8080/consumer")
+    import config
+    spline_web_ui_url = config.SPLINE_WEB_UI
+    consumer_url      = config.SPLINE_CONSUMER
 
     # Attempt to resolve the event ID for the plan
     event_id = None

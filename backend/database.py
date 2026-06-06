@@ -1,19 +1,15 @@
-import os
-from sqlalchemy import create_engine, text # type: ignore
-from sqlalchemy.orm import sessionmaker, Session # type: ignore
-from dotenv import load_dotenv
+"""
+database.py — SQLAlchemy session for the dataguard PostgreSQL DB.
+All other code uses get_db() to get a session.
+"""
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
 
-load_dotenv()
+import config
 
-# Use POSTGRES_URL from .env
-POSTGRES_URL = os.getenv("POSTGRES_URL")
-
-if not POSTGRES_URL:
-    # Fallback/Default for development
-    POSTGRES_URL = "postgresql://postgres:postgres@localhost:5432/dataguard"
-
-engine = create_engine(POSTGRES_URL)
+engine       = create_engine(config.POSTGRES_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 
 def get_db():
     db = SessionLocal()
@@ -22,8 +18,8 @@ def get_db():
     finally:
         db.close()
 
+
 def is_db_available() -> bool:
-    """Check if the database is reachable."""
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
