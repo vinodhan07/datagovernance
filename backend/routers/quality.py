@@ -104,9 +104,36 @@ async def _scan_sse(integration_id: str, db: Session):
         )
 
         if not rules:
-            yield _event("WARNING", "No quality rules defined for this integration")
-            yield _event("DONE", "No rules to scan — add rules first")
-            return
+            yield _event("INFO", "No rules defined. Auto-generating default rules for available tables...")
+            from models import LineageDataset, LineageJob
+            datasets = (
+                db.query(LineageDataset)
+                .join(LineageJob, LineageDataset.job_id == LineageJob.id)
+                .filter(LineageJob.integration_id == integration_id)
+                .all()
+            )
+            seen_tables = set()
+            for ds in datasets:
+                if ds.name in seen_tables:
+                    continue
+                seen_tables.add(ds.name)
+                rule = QualityRule(
+                    integration_id=integration_id,
+                    table_name=ds.name,
+                    check_type="row_count",
+                    threshold="> 0",
+                    check_yaml=f"checks for {ds.name}:\n  - row_count > 0"
+                )
+                db.add(rule)
+            
+            if seen_tables:
+                db.commit()
+                rules = db.query(QualityRule).filter(QualityRule.integration_id == integration_id).all()
+                yield _event("INFO", f"Auto-generated {len(rules)} basic row_count rules.")
+            else:
+                yield _event("WARNING", "No quality rules defined and no tables found in lineage to generate rules.")
+                yield _event("DONE", "No rules to scan — run ETL pipeline first")
+                return
 
         yield _event("INFO", f"Found {len(rules)} rule(s) across "
                      f"{len(set(r.table_name for r in rules))} table(s)")

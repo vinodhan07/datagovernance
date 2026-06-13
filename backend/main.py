@@ -29,11 +29,10 @@ async def root():
 
 @app.get("/dashboard/stats")
 async def dashboard_stats():
-    from store import list_integrations
     from database import SessionLocal, is_db_available
-    from models import PipelineRun, QualityRule, QualityScan
+    from models import PipelineRun, QualityRule, QualityScan, Integration
 
-    integrations = list_integrations()
+    integrations_count = 0
     recent_runs = []
     quality_rules_count = 0
     latest_quality_score = None
@@ -41,6 +40,7 @@ async def dashboard_stats():
     if is_db_available():
         db = SessionLocal()
         try:
+            integrations_count = db.query(Integration).count()
             recent_runs = (
                 db.query(PipelineRun)
                 .order_by(PipelineRun.started_at.desc())
@@ -63,7 +63,7 @@ async def dashboard_stats():
     failed    = sum(1 for r in recent_runs if r.status == "failed")
 
     return {
-        "integrations": len(integrations),
+        "integrations": integrations_count,
         "pipeline_runs": len(recent_runs),
         "completed_runs": completed,
         "failed_runs": failed,

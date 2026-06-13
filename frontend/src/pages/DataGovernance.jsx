@@ -5,7 +5,7 @@ import AuditTimeline from '../components/AuditTimeline.jsx'
 import PipelineTerminal from '../components/PipelineTerminal.jsx'
 import {
   getIntegrations, getCapabilities, getLatestPipelineRun,
-  getCatalogTables, getQualityScore, getQualityScans, getQualityScanDetail,
+  getCatalogTables, getQualityScore, getQualityScans, getQualityScanDetail, qualityScanUrl
 } from '../api/client.js'
 
 const TABS = [
@@ -30,7 +30,7 @@ function FeatureBadge({ available, reason }) {
 }
 
 // ── Catalog tab ───────────────────────────────────────────────────────────────
-function CatalogTab({ tables, loading, onNavigate }) {
+function CatalogTab({ tables, loading }) {
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-hint)', fontSize: 13, padding: 24 }}>
       <Loader size={14} className="spin" /> Loading catalog tables…
@@ -97,7 +97,7 @@ function CatalogTab({ tables, loading, onNavigate }) {
 }
 
 // ── Quality tab ───────────────────────────────────────────────────────────────
-function QualityTab({ score, findings, loading, onNavigate }) {
+function QualityTab({ score, findings, loading, onRunScan }) {
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-hint)', fontSize: 13, padding: 24 }}>
       <Loader size={14} className="spin" /> Loading quality data…
@@ -137,6 +137,12 @@ function QualityTab({ score, findings, loading, onNavigate }) {
               {findings.length > 0 ? `${findings.filter(f => f.status === 'pass').length}/${findings.length} checks passed` : 'Run a scan from the Quality page'}
             </div>
           </div>
+        </div>
+        <div style={{ marginLeft: 'auto' }}>
+          <button onClick={onRunScan} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: loading ? 'var(--bg-surface)' : 'var(--accent-teal)', color: loading ? 'var(--text-hint)' : '#fff', border: loading ? '1px solid var(--border)' : 'none', cursor: loading ? 'not-allowed' : 'pointer' }}>
+            {loading ? <Loader size={14} className="spin" /> : <Play size={14} />} 
+            {findings.length > 0 ? 'Run Quality Scan' : 'Auto-Generate Rules & Scan'}
+          </button>
         </div>
       </div>
 
@@ -191,19 +197,12 @@ function QualityTab({ score, findings, loading, onNavigate }) {
           ))}
         </div>
       ) : (
-        <div style={{ padding: '20px 24px', textAlign: 'center', background: 'var(--bg-base)', borderRadius: 8, border: '1px solid var(--border)' }}>
+        <div style={{ padding: '40px 24px', textAlign: 'center', background: 'var(--bg-base)', borderRadius: 8, border: '1px solid var(--border)' }}>
+          <ShieldCheck size={32} color="var(--text-hint)" style={{ marginBottom: 12 }} />
+          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>No Quality Checks Found</div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            Quality rules are auto-generated after the pipeline runs. Go to the <strong>Quality</strong> page to trigger a scan.
+            No quality rules defined or scan hasn't been run yet. Click the button above to auto-generate default rules and run a scan.
           </div>
-        </div>
-      )}
-
-      {onNavigate && (
-        <div style={{ marginTop: 20 }}>
-          <button onClick={() => onNavigate('quality')}
-            style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent-teal)', background: 'var(--accent-teal-soft)', border: '1px solid rgba(20,184,166,0.25)', borderRadius: 8, padding: '8px 16px', cursor: 'pointer', fontFamily: 'inherit' }}>
-            Manage Rules & Run Full Scan →
-          </button>
         </div>
       )}
     </div>
@@ -361,6 +360,17 @@ export default function DataGovernance({ onNavigate }) {
 
     setPipelineDone(true)
     await _loadResultData(selected.id, newCaps)
+  }
+
+  const handleRunQualityScan = async () => {
+    if (!selectedId) return
+    setQualityLoading(true)
+    try {
+      await fetch(qualityScanUrl(selectedId))
+    } catch (e) {
+      console.error('Scan failed', e)
+    }
+    await _loadResultData(selectedId, capabilities)
   }
 
   const handleSelectIntegration = (ig) => {
@@ -558,7 +568,6 @@ export default function DataGovernance({ onNavigate }) {
                   <CatalogTab
                     tables={catalogTables}
                     loading={catalogLoading}
-                    onNavigate={onNavigate}
                   />
                 </div>
                 <div style={{ display: activeTab === 'quality' ? 'block' : 'none' }}>
@@ -566,7 +575,7 @@ export default function DataGovernance({ onNavigate }) {
                     score={qualityScore}
                     findings={qualityFindings}
                     loading={qualityLoading}
-                    onNavigate={onNavigate}
+                    onRunScan={handleRunQualityScan}
                   />
                 </div>
 
