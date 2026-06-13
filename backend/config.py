@@ -39,7 +39,14 @@ MARIADB_JAR_VER    = os.getenv("MARIADB_DRIVER_VERSION",    "2.7.9")
 POSTGRES_JAR_VER   = os.getenv("POSTGRES_DRIVER_VERSION",   "42.7.3")
 
 # ── Security ──────────────────────────────────────────────────────────────────
-ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "")
+ENCRYPTION_KEY   = os.getenv("ENCRYPTION_KEY", "")
+JWT_SECRET       = os.getenv("JWT_SECRET", "dataguard-dev-secret-change-in-production")
+JWT_ALGORITHM    = "HS256"
+JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "24"))
+
+# ── OpenMetadata catalog ───────────────────────────────────────────────────────
+OPENMETADATA_URL       = os.getenv("OPENMETADATA_URL",       "http://localhost:8585/api")
+OPENMETADATA_JWT_TOKEN = os.getenv("OPENMETADATA_JWT_TOKEN", "")
 
 # ── Spline consumer polling ───────────────────────────────────────────────────
 SPLINE_POLL_RETRIES = int(os.getenv("SPLINE_CONSUMER_POLL_RETRIES", "6"))

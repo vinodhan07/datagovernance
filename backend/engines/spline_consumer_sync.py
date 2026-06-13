@@ -104,7 +104,12 @@ def _column_lineage_from_arango(plan_id: str, attr_map: dict[str, str],
 # ── Consumer API helpers ──────────────────────────────────────────────────────
 
 def fetch_latest_event(app_name: str, since_ms: int) -> dict | None:
-    """Poll Spline Consumer for the first event after since_ms matching app_name."""
+    """
+    Poll Spline Consumer for the latest event recorded after since_ms.
+    Prefers events whose applicationName contains app_name, but falls back to
+    ANY new event since since_ms — this covers GitHub ETL scripts whose Spark
+    session uses a different app name than DataGuard's internal name.
+    """
     for attempt in range(config.SPLINE_POLL_RETRIES):
         try:
             resp = requests.get(
@@ -113,22 +118,28 @@ def fetch_latest_event(app_name: str, since_ms: int) -> dict | None:
                 timeout=10,
             )
             if resp.status_code == 200:
-                for item in resp.json().get("items", []):
-                    if item.get("timestamp", 0) < since_ms:
-                        continue
-                    # Fast path: applicationName field populated
-                    if app_name.lower() in (item.get("applicationName") or "").lower():
-                        return item
-                    # Slow path: check plan's appName in ArangoDB extra field
-                    plan_id = item.get("executionPlanId")
-                    if plan_id:
-                        plan = fetch_execution_plan(plan_id)
-                        if not plan:
-                            continue
-                        stored = (plan.get("executionPlan", {}).get("extra") or {}).get("appName", "")
-                        if app_name.lower() in stored.lower():
-                            item["_resolved_plan"] = plan
+                new_events = [
+                    item for item in resp.json().get("items", [])
+                    if item.get("timestamp", 0) >= since_ms
+                ]
+                if not new_events:
+                    pass  # nothing yet — keep retrying
+                else:
+                    # Prefer events whose app name matches
+                    for item in new_events:
+                        if app_name.lower() in (item.get("applicationName") or "").lower():
                             return item
+                        plan_id = item.get("executionPlanId")
+                        if plan_id:
+                            plan = fetch_execution_plan(plan_id)
+                            if plan:
+                                stored = (plan.get("executionPlan", {}).get("extra") or {}).get("appName", "")
+                                if app_name.lower() in stored.lower():
+                                    item["_resolved_plan"] = plan
+                                    return item
+                    # Fallback: return the most recent new event regardless of name
+                    # (GitHub ETL scripts may use their own Spark app name)
+                    return new_events[0]
         except Exception as exc:
             logger.warning("Spline poll attempt %d failed: %s", attempt + 1, exc)
 

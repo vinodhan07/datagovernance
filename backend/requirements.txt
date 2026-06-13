@@ -15,3 +15,10 @@ pyspark>=3.5.0,<4.0.0
 types-pymysql
 types-requests
 dotenv
+soda-core>=3.3.0
+soda-core-postgres>=3.3.0
+soda-core-mysql>=3.3.0
+pandas>=2.0.0
+openpyxl>=3.1.0
+python-jose[cryptography]>=3.3.0
+bcrypt>=4.0.0

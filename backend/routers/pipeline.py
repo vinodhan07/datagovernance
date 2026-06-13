@@ -116,7 +116,30 @@ def _discover_schema(creds: dict) -> dict[str, list]:
 
 # ── Spline lineage sync (shared by both pipeline paths) ──────────────────────
 
-def _sync_lineage(db: Session, app_name: str, start_ms: int, run_id: str, integration_id: str):
+def _get_pg_table_info(table_name: str) -> tuple[list[dict], int]:
+    """Query column definitions and row count for a PostgreSQL table in target DB."""
+    user, pw, host, port, _ = _pg_parts()
+    target_url = f"postgresql://{user}:{pw}@{host}:{port}/{config.TARGET_DB}"
+    engine = create_engine(target_url)
+    cols = []
+    row_count = 0
+    try:
+        with engine.connect() as conn:
+            res = conn.execute(
+                text("SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = 'public' AND table_name = :tbl"),
+                {"tbl": table_name}
+            ).fetchall()
+            for r in res:
+                cols.append({"Field": r[0], "Type": r[1]})
+            row_res = conn.execute(text(f'SELECT COUNT(*) FROM "{table_name}"')).fetchone()
+            if row_res:
+                row_count = row_res[0]
+    except Exception as e:
+        logger.warning(f"Could not get PG table info for {table_name}: {e}")
+    return cols, row_count
+
+
+def _sync_lineage(db: Session, app_name: str, start_ms: int, run_id: str, integration_id: str) -> tuple[str | None, str, dict]:
     """
     After ETL completes, poll Spline Consumer and save column lineage to PostgreSQL.
     Retries up to 3 times (Spline may take a few seconds to process the event).
@@ -129,7 +152,7 @@ def _sync_lineage(db: Session, app_name: str, start_ms: int, run_id: str, integr
         time.sleep(3)
 
     if not event:
-        return None, "no_spline_event"
+        return None, "no_spline_event", {}
 
     plan_id = event.get("executionPlanId")
     plan    = fetch_execution_plan(plan_id) if plan_id else None
@@ -140,10 +163,69 @@ def _sync_lineage(db: Session, app_name: str, start_ms: int, run_id: str, integr
         build_fallback_lineage_data("etl", "", "", [], integration_id, app_name)
     )
     persist_lineage(db, lineage_data, pipeline_run_id=run_id, spline_plan_id=plan_id)
-    return plan_id, "ok"
+
+    target_info = {}
+    for dl in lineage_data.get("dataset_lineage", []):
+        t = dl.get("target_dataset")
+        if t and t not in ("target", "source"):
+            cols, row_cnt = _get_pg_table_info(t)
+            if not cols:
+                seen_cols = set()
+                for cl in dl.get("column_lineage", []):
+                    if cl.get("target_dataset") == t:
+                        seen_cols.add(cl.get("target_column"))
+                cols = [{"Field": c, "Type": "VARCHAR"} for c in seen_cols if c]
+            target_info[t] = {
+                "schema": cols,
+                "row_count": row_cnt
+            }
+
+    return plan_id, "ok", target_info
 
 
 # ── Route handlers ────────────────────────────────────────────────────────────
+
+@router.get("/{integration_id}/capabilities")
+def get_capabilities(integration_id: str, db: Session = Depends(get_db)):
+    """
+    Pre-flight check — probe the integration source and return which features
+    (lineage / catalog / quality) are available and why.
+    """
+    from engines.preflight_detector import detect_mariadb_capabilities, detect_github_capabilities
+    from integrations_service import get_connection_config
+
+    integration = db.query(Integration).filter(Integration.id == integration_id).first()
+    if not integration:
+        raise HTTPException(404, "Integration not found")
+
+    creds = get_connection_config(db, integration_id)
+    if not creds:
+        return {
+            "provider": integration.provider,
+            "lineage":  {"available": False, "reason": "Credentials not found"},
+            "catalog":  {"available": False, "reason": "Credentials not found"},
+            "quality":  {"available": False, "reason": "Credentials not found"},
+        }
+
+    if integration.provider == "GitHub":
+        result = detect_github_capabilities(
+            token=creds.get("token", ""),
+            owner=creds.get("owner", ""),
+            repo=creds.get("repo", ""),
+            branch=creds.get("branch", "main"),
+        )
+    else:
+        result = detect_mariadb_capabilities(creds)
+
+    return {
+        "provider":   result.get("provider", integration.provider),
+        "lineage":    result["capabilities"]["lineage"],
+        "catalog":    result["capabilities"]["catalog"],
+        "quality":    result["capabilities"]["quality"],
+        "details":    {k: v for k, v in result.items() if k not in ("capabilities", "error", "provider")},
+        "error":      result.get("error"),
+    }
+
 
 @router.get("/{integration_id}/run")
 async def run_pipeline(integration_id: str, db: Session = Depends(get_db)):
@@ -215,6 +297,15 @@ async def _mariadb_pipeline(integration_id: str, db: Session):
             yield _event("ERROR", "No tables found in source database"); return
         yield _event("OK", f"Found {len(tables)} table(s): {', '.join(tables)}")
 
+        # ── Auto-generate quality rules from schema (skips if rules exist) ────
+        try:
+            from engines.quality_auto_rules import auto_generate_rules
+            n_rules = auto_generate_rules(db, integration_id, schema)
+            if n_rules:
+                yield _event("OK", f"Auto-generated {n_rules} quality rule(s) from schema")
+        except Exception as qr_err:
+            yield _event("INFO", f"Quality rule auto-generation skipped: {qr_err}")
+
         # ── Create target DB ──────────────────────────────────────────────────
         yield _event("INFO", f"Ensuring PostgreSQL target '{config.TARGET_DB}' exists...")
         _ensure_target_db()
@@ -254,7 +345,7 @@ async def _mariadb_pipeline(integration_id: str, db: Session):
 
             # ── Sync Spline lineage for this table ────────────────────────────
             yield _event("INFO", f"[{table}] Syncing lineage...")
-            plan_id, status = _sync_lineage(db, app_name, start_ms, run_id, integration_id)
+            plan_id, status, _ = _sync_lineage(db, app_name, start_ms, run_id, integration_id)
             if plan_id:
                 all_plan_ids.append(plan_id)
                 yield _event("OK", f"[{table}] Lineage saved (plan {plan_id[:8]}...)")
@@ -270,6 +361,24 @@ async def _mariadb_pipeline(integration_id: str, db: Session):
             "spline_plan_id": all_plan_ids[-1] if all_plan_ids else None,
         })
         db.commit()
+
+        # ── Push table metadata to OpenMetadata catalog (non-blocking) ────────
+        yield _event("INFO", "Pushing table metadata to catalog...")
+        try:
+            from engines.openmetadata_sync import push_table_metadata
+            pushed = 0
+            for table in tables:
+                cols = [{"name": c["Field"], "data_type": c.get("Type", "VARCHAR")}
+                        for c in schema.get(table, [])]
+                if push_table_metadata(table, cols):
+                    pushed += 1
+            if pushed:
+                yield _event("OK", f"Catalog updated — {pushed} table(s) pushed to OpenMetadata")
+            else:
+                yield _event("INFO", "Catalog push skipped (OpenMetadata not running or not configured)")
+        except Exception as cat_err:
+            yield _event("WARNING", f"Catalog push failed (non-fatal): {cat_err}")
+
         yield _event("DONE", f"Pipeline complete — {len(tables)} tables, lineage captured in Spline")
 
     except Exception as exc:
@@ -279,7 +388,7 @@ async def _mariadb_pipeline(integration_id: str, db: Session):
 
 
 # ════════════════════════════════════════════════════════════════════════════════
-# PATH B — GitHub pipeline
+# PATH B — GitHub pipeline (multi-file: scripts + data files + SQL files)
 # ════════════════════════════════════════════════════════════════════════════════
 
 async def _github_pipeline(integration_id: str, db: Session, integration: Integration):
@@ -287,32 +396,40 @@ async def _github_pipeline(integration_id: str, db: Session, integration: Integr
     try:
         yield _event("INFO", "GitHub pipeline initialising...")
 
-        creds    = get_connection_config(db, integration_id)
+        creds  = get_connection_config(db, integration_id)
         if not creds:
             yield _event("ERROR", "Integration credentials not found"); return
 
-        owner    = creds["owner"]
-        repo     = creds["repo"]
-        filepath = creds["filepath"]
-        branch   = creds["branch"]
-        token    = creds["token"]
-        headers  = {"Authorization": f"token {token}"} if token else {}
+        owner  = creds["owner"]
+        repo   = creds["repo"]
+        branch = creds.get("branch", "main")
+        token  = creds.get("token", "")
+        gh_headers = {"Authorization": f"token {token}"} if token else {}
 
-        # ── Download ETL script from GitHub ───────────────────────────────────
-        yield _event("INFO", f"Fetching '{filepath}' from {owner}/{repo}@{branch}...")
-        raw_url  = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{filepath}"
-        resp     = http_requests.get(raw_url, headers=headers, timeout=15)
-        if resp.status_code != 200:
-            yield _event("ERROR", f"Cannot download script: HTTP {resp.status_code}"); return
+        # ── Detect what's in the repo ─────────────────────────────────────────
+        yield _event("INFO", f"Scanning repository {owner}/{repo}@{branch}...")
+        from engines.preflight_detector import detect_github_capabilities
+        caps = detect_github_capabilities(token, owner, repo, branch)
 
-        # Patch Scala companion-object syntax illegal in Python:
-        # init_cls.MODULE$.method() → getattr(init_cls, "MODULE$").method()
-        script = re.sub(r'(\w+)\.MODULE\$\.(\w+)\(', r'getattr(\1, "MODULE$").\2(', resp.text)
-        # Patch jdbc:mariadb to jdbc:mysql with permitMysqlScheme to fix PySpark decoding issues
-        script = script.replace("jdbc:mariadb://", "jdbc:mysql://")
-        script = script.replace("/{MARIADB_DB}\"", "/{MARIADB_DB}?permitMysqlScheme\"")
-        script = script.replace("/{MARIADB_DB}'", "/{MARIADB_DB}?permitMysqlScheme'")
-        yield _event("OK", f"Script downloaded ({len(script)} bytes)")
+        if caps.get("error"):
+            yield _event("ERROR", caps["error"]); return
+
+        script_files = caps["script_files"]
+        data_files   = caps["data_files"]
+        sql_files    = caps["sql_files"]
+
+        total_files = len(script_files) + len(data_files) + len(sql_files)
+        if total_files == 0:
+            yield _event("ERROR",
+                "No processable files found in repository.\n"
+                "Expected: Python scripts (.py), data files (.csv/.json/.xlsx), or SQL files (.sql)."
+            )
+            return
+
+        yield _event("OK",
+            f"Found: {len(script_files)} script(s), {len(data_files)} data file(s), "
+            f"{len(sql_files)} SQL file(s)"
+        )
 
         # ── Create run record ─────────────────────────────────────────────────
         run_id = str(uuid.uuid4())
@@ -320,24 +437,12 @@ async def _github_pipeline(integration_id: str, db: Session, integration: Integr
                            integration_name=integration.name, status="running"))
         db.commit()
 
-        # ── Ensure target DB exists before script tries to write ──────────────
+        # ── Ensure target DB exists ───────────────────────────────────────────
         yield _event("INFO", f"Ensuring '{config.TARGET_DB}' database exists...")
         _ensure_target_db()
         yield _event("OK", f"'{config.TARGET_DB}' ready")
 
-        # ── Write to temp file and execute ────────────────────────────────────
-        venv_python = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", ".venv", "bin", "python")
-        )
-        if not os.path.isfile(venv_python):
-            venv_python = sys.executable
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", prefix="etl_",
-                                         delete=False, dir="/tmp") as tmp:
-            tmp.write(script)
-            tmp_path = tmp.name
-
-        # Try to find a MariaDB integration in the database to pass dynamic credentials to the script
+        # Build MariaDB env vars for scripts that need them
         mariadb_integration = db.query(Integration).filter(Integration.provider == "MariaDB").first()
         if mariadb_integration:
             m_creds = get_connection_config(db, mariadb_integration.id) or {}
@@ -353,10 +458,9 @@ async def _github_pipeline(integration_id: str, db: Session, integration: Integr
             m_user = config.MARIADB_USER
             m_pass = config.MARIADB_PASS
 
-        # Pass all DB connection values dynamically so script doesn't need them hardcoded
-        env = {
+        script_env = {
             **os.environ,
-            "JDK_JAVA_OPTIONS":   "--add-opens=java.base/sun.net.www.protocol.jar=ALL-UNNAMED",
+            "JDK_JAVA_OPTIONS":    "--add-opens=java.base/sun.net.www.protocol.jar=ALL-UNNAMED",
             "MARIADB_HOST":        m_host,
             "MARIADB_PORT":        m_port,
             "MARIADB_DB":          m_db,
@@ -366,58 +470,318 @@ async def _github_pipeline(integration_id: str, db: Session, integration: Integr
             "SPLINE_PRODUCER_URL": config.SPLINE_PRODUCER,
         }
 
-        yield _event("INFO", "Executing ETL script (first run ~3 min for JAR downloads)...")
-        start_ms = int(time.time() * 1000)
-        start_ts = time.time()
+        venv_python = os.path.normpath(
+            os.path.join(os.path.dirname(__file__), "..", ".venv", "bin", "python")
+        )
+        if not os.path.isfile(venv_python):
+            venv_python = sys.executable
 
-        try:
-            proc = subprocess.run([venv_python, tmp_path],
-                                  capture_output=True, text=True, timeout=600, env=env)
-        finally:
+        tables_loaded: dict[str, int]    = {}   # {table_name: row_count}
+        loaded_schema: dict[str, list]   = {}   # for quality rule auto-generation
+        all_plan_ids:  list[str]         = []
+
+        # ════════════════════════════════════════════════════════════════════════
+        # STEP 1 — Execute Python / script files (lineage via Spline)
+        # ════════════════════════════════════════════════════════════════════════
+        for filepath in script_files:
+            ext = os.path.splitext(filepath)[1].lower()
+            if ext not in (".py", ".ipynb", ".r", ".rb", ".scala"):
+                continue
+
+            yield _event("INFO", f"[script] Downloading {filepath}...")
+            raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{filepath}"
+            resp = http_requests.get(raw_url, headers=gh_headers, timeout=15)
+            if resp.status_code != 200:
+                yield _event("WARNING", f"[script] Cannot download {filepath}: HTTP {resp.status_code}")
+                continue
+
+            if ext == ".py":
+                script = re.sub(r'(\w+)\.MODULE\$\.(\w+)\(', r'getattr(\1, "MODULE$").\2(', resp.text)
+                script = script.replace("jdbc:mariadb://", "jdbc:mysql://")
+                script = script.replace("/{MARIADB_DB}\"", "/{MARIADB_DB}?permitMysqlScheme\"")
+                script = script.replace("/{MARIADB_DB}'", "/{MARIADB_DB}?permitMysqlScheme'")
+
+                # ── Auto-inject Spline into any PySpark script ────────────────
+                # If the script creates a SparkSession but hasn't configured the
+                # Spline agent, patch it so lineage is captured automatically.
+                if "SparkSession" in script and "spark.spline" not in script:
+                    spline_pkg = (
+                        f"za.co.absa.spline.agent.spark:"
+                        f"spark-3.5-spline-agent-bundle_2.12:{config.SPLINE_AGENT_VER}"
+                    )
+                    spline_configs = (
+                        f'\n    .config("spark.spline.producer.url",'
+                        f' os.getenv("SPLINE_PRODUCER_URL", "{config.SPLINE_PRODUCER}"))'
+                        f'\n    .config("spark.spline.mode", "ENABLED")'
+                    )
+                    # Inject Spline producer + mode before .getOrCreate()
+                    script = re.sub(
+                        r'(\.getOrCreate\(\))',
+                        spline_configs + r'\1',
+                        script,
+                        count=1,
+                    )
+                    # Add Spline JAR to existing packages list, or inject new packages config
+                    pkg_pattern = re.compile(
+                        r'(\.config\(["\']spark\.jars\.packages["\'],\s*["\'])([^"\']+)(["\'])'
+                    )
+                    if pkg_pattern.search(script):
+                        script = pkg_pattern.sub(
+                            lambda m: m.group(1) + m.group(2) + f",{spline_pkg}" + m.group(3),
+                            script,
+                        )
+                    else:
+                        pkg_injection = (
+                            f'\n    .config("spark.jars.packages", "{spline_pkg}")'
+                        )
+                        script = re.sub(
+                            r'(\.getOrCreate\(\))',
+                            pkg_injection + r'\1',
+                            script,
+                            count=1,
+                        )
+                    yield _event("INFO", f"[script] Spline auto-instrumentation injected into {filepath}")
+
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".py", prefix="etl_",
+                                                 delete=False, dir="/tmp") as tmp:
+                    tmp.write(script)
+                    tmp_path = tmp.name
+
+                yield _event("INFO", f"[script] Executing {filepath}...")
+                start_ms = int(time.time() * 1000)
+                t0 = time.time()
+                try:
+                    proc = subprocess.run([venv_python, tmp_path],
+                                          capture_output=True, text=True, timeout=600,
+                                          env=script_env)
+                finally:
+                    try: os.unlink(tmp_path)
+                    except OSError: pass
+
+                elapsed = time.time() - t0
+                if proc.returncode != 0:
+                    errs = [l for l in (proc.stderr or "").splitlines()
+                            if any(k in l for k in ("Exception", "Error:", "Caused by"))]
+                    summary = "\n".join(errs[-15:]) if errs else (proc.stderr or "")[-1000:]
+                    yield _event("WARNING", f"[script] {filepath} failed (exit {proc.returncode}): {summary}")
+                else:
+                    yield _event("OK", f"[script] {filepath} completed in {elapsed:.0f}s")
+                    for line in (proc.stdout or "").splitlines()[-10:]:
+                        if line.strip():
+                            yield _event("LOG", line.strip())
+
+                    plan_id, _, target_info = _sync_lineage(db, "DataGuard ETL", start_ms, run_id, integration_id)
+                    if plan_id:
+                        all_plan_ids.append(plan_id)
+                        yield _event("OK", f"[script] Lineage saved — plan {plan_id[:8]}...")
+                        if target_info:
+                            for tbl, info in target_info.items():
+                                tables_loaded[tbl] = info["row_count"]
+                                loaded_schema[tbl] = info["schema"]
+                                yield _event("OK", f"[script] Detected target table '{tbl}' ({info['row_count']} rows)")
+                    else:
+                        yield _event("INFO", "[script] No Spline event detected (script may not use PySpark)")
+
+        # ════════════════════════════════════════════════════════════════════════
+        # STEP 2 — Load data files (.csv, .json, .xlsx, .tsv, .parquet)
+        # ════════════════════════════════════════════════════════════════════════
+        if data_files:
+            yield _event("INFO", f"Loading {len(data_files)} data file(s) into '{config.TARGET_DB}'...")
+            user, pw, host, port, _ = _pg_parts()
+            pg_url = f"postgresql://{user}:{pw}@{host}:{port}/{config.TARGET_DB}"
+
+            for filepath in data_files:
+                table_name, row_count, schema_entry, err = _load_data_file(
+                    filepath, owner, repo, branch, gh_headers, pg_url
+                )
+                if err:
+                    yield _event("WARNING", f"[data] {filepath}: {err}")
+                else:
+                    tables_loaded[table_name] = row_count
+                    loaded_schema.update(schema_entry)
+                    yield _event("OK", f"[data] {filepath} → table '{table_name}' ({row_count} rows)")
+
+        # ════════════════════════════════════════════════════════════════════════
+        # STEP 3 — Execute SQL files (.sql)
+        # ════════════════════════════════════════════════════════════════════════
+        if sql_files:
+            yield _event("INFO", f"Executing {len(sql_files)} SQL file(s) against '{config.TARGET_DB}'...")
+            user, pw, host, port, _ = _pg_parts()
+            pg_url = f"postgresql://{user}:{pw}@{host}:{port}/{config.TARGET_DB}"
+
+            for filepath in sql_files:
+                n_stmts, err = _execute_sql_file(filepath, owner, repo, branch, gh_headers, pg_url)
+                if err:
+                    yield _event("WARNING", f"[sql] {filepath}: {err}")
+                else:
+                    yield _event("OK", f"[sql] {filepath} — {n_stmts} statement(s) executed")
+
+        # ════════════════════════════════════════════════════════════════════════
+        # STEP 4 — Push loaded tables to catalog + auto-generate quality rules
+        # ════════════════════════════════════════════════════════════════════════
+        if tables_loaded or sql_files:
+            # Auto-generate quality rules for data-file loaded tables
+            if loaded_schema:
+                try:
+                    from engines.quality_auto_rules import auto_generate_rules
+                    n_rules = auto_generate_rules(db, integration_id, loaded_schema)
+                    if n_rules:
+                        yield _event("OK", f"Auto-generated {n_rules} quality rule(s) for loaded tables")
+                except Exception as qr_err:
+                    yield _event("INFO", f"Quality rule generation skipped: {qr_err}")
+
+            # Push to OpenMetadata catalog
             try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+                from engines.openmetadata_sync import push_table_metadata
+                pushed = 0
+                for table_name, schema_cols in loaded_schema.items():
+                    cols = [{"name": c["Field"], "data_type": c.get("Type", "VARCHAR")}
+                            for c in schema_cols]
+                    if push_table_metadata(table_name, cols):
+                        pushed += 1
+                if pushed:
+                    yield _event("OK", f"Catalog updated — {pushed} table(s) pushed to OpenMetadata")
+                else:
+                    yield _event("INFO", "Catalog push skipped (OpenMetadata not running or not configured)")
+            except Exception as cat_err:
+                yield _event("WARNING", f"Catalog push failed (non-fatal): {cat_err}")
 
-        elapsed = time.time() - start_ts
-
-        if proc.returncode != 0:
-            stderr = proc.stderr or ""
-            # Extract the most useful lines: exception messages + last stack frames
-            error_lines = [l for l in stderr.splitlines()
-                           if any(k in l for k in ("Exception", "Error:", "Caused by", "WARN Failed", "[WARN]"))]
-            summary = "\n".join(error_lines[-30:]) if error_lines else stderr[-2000:]
-            yield _event("ERROR", f"ETL script failed (exit {proc.returncode}) after {elapsed:.0f}s:\n{summary}")
-            _fail_run(db, run_id, proc.stderr[-2000:])
-            return
-
-        yield _event("OK", f"ETL script completed in {elapsed:.0f}s")
-        for line in (proc.stdout or "").splitlines()[-20:]:
-            if line.strip():
-                yield _event("LOG", line.strip())
-
-        # ── Sync Spline lineage ───────────────────────────────────────────────
-        yield _event("INFO", "Syncing Spline lineage...")
-        plan_id, status = _sync_lineage(db, "DataGuard ETL", start_ms, run_id, integration_id)
-
+        # ── Finalise run record ───────────────────────────────────────────────
         db.query(PipelineRun).filter(PipelineRun.id == run_id).update({
             "status": "completed",
             "completed_at": datetime.now(timezone.utc),
-            "spline_plan_id": plan_id,
+            "tables_scanned": list(tables_loaded.keys()),
+            "row_counts": tables_loaded,
+            "spline_plan_id": all_plan_ids[-1] if all_plan_ids else None,
         })
         db.commit()
 
-        if plan_id:
-            yield _event("OK", f"Lineage saved — plan {plan_id[:8]}...")
-        else:
-            yield _event("WARNING", "Spline event not found — check Spline UI at {config.SPLINE_WEB_UI}")
+        summary_parts = []
+        if script_files:  summary_parts.append(f"{len(script_files)} script(s) run")
+        if tables_loaded: summary_parts.append(f"{len(tables_loaded)} data table(s) loaded")
+        if sql_files:     summary_parts.append(f"{len(sql_files)} SQL file(s) executed")
+        if all_plan_ids:  summary_parts.append("lineage captured")
 
-        yield _event("DONE", "GitHub ETL pipeline completed — view lineage at {config.SPLINE_WEB_UI}")
+        yield _event("DONE", "GitHub pipeline complete — " + ", ".join(summary_parts))
 
     except Exception as exc:
         logger.error("GitHub pipeline failed: %s", exc, exc_info=True)
         _fail_run(db, run_id, exc)
         yield _event("ERROR", f"Pipeline failed: {exc}")
+
+
+# ── GitHub data file loader ───────────────────────────────────────────────────
+
+def _load_data_file(
+    filepath: str, owner: str, repo: str, branch: str,
+    headers: dict, pg_url: str,
+) -> tuple[str, int, dict, str | None]:
+    """
+    Download a data file from GitHub and load it into PostgreSQL company_data.
+    Returns (table_name, row_count, schema_dict, error_or_None).
+    """
+    import io
+    from pathlib import PurePosixPath
+
+    try:
+        import pandas as pd
+        from sqlalchemy import create_engine as _create_engine
+    except ImportError:
+        return "", 0, {}, "pandas not installed — run: pip install pandas openpyxl"
+
+    raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{filepath}"
+    resp = http_requests.get(raw_url, headers=headers, timeout=30)
+    if resp.status_code != 200:
+        return "", 0, {}, f"HTTP {resp.status_code} fetching {filepath}"
+
+    # Derive table name from filename (e.g. data/customers.csv → customers)
+    stem = PurePosixPath(filepath).stem
+    # Sanitise: lowercase, replace non-alphanumeric with underscore
+    import re as _re
+    table_name = _re.sub(r"[^a-z0-9_]", "_", stem.lower()).strip("_") or "imported_data"
+
+    ext = PurePosixPath(filepath).suffix.lower()
+    content = resp.content
+
+    try:
+        if ext == ".csv":
+            df = pd.read_csv(io.BytesIO(content))
+        elif ext in (".json", ".jsonl"):
+            try:
+                df = pd.read_json(io.BytesIO(content))
+            except Exception:
+                # Try newline-delimited JSON
+                df = pd.read_json(io.BytesIO(content), lines=True)
+        elif ext in (".xlsx", ".xls"):
+            df = pd.read_excel(io.BytesIO(content))
+        elif ext == ".tsv":
+            df = pd.read_csv(io.BytesIO(content), sep="\t")
+        elif ext == ".parquet":
+            df = pd.read_parquet(io.BytesIO(content))
+        else:
+            return "", 0, {}, f"Unsupported file type: {ext}"
+    except Exception as parse_err:
+        return "", 0, {}, f"Cannot parse {filepath}: {parse_err}"
+
+    if df.empty:
+        return table_name, 0, {}, None
+
+    # Sanitise column names
+    df.columns = [
+        _re.sub(r"[^a-z0-9_]", "_", str(c).lower()).strip("_") or f"col_{i}"
+        for i, c in enumerate(df.columns)
+    ]
+
+    try:
+        engine = _create_engine(pg_url)
+        df.to_sql(table_name, engine, if_exists="replace", index=False)
+        engine.dispose()
+    except Exception as pg_err:
+        return table_name, 0, {}, f"PostgreSQL write failed: {pg_err}"
+
+    # Build schema dict for quality rule generation
+    from engines.quality_auto_rules import build_schema_from_dataframe
+    schema_entry = build_schema_from_dataframe(table_name, df)
+
+    return table_name, len(df), schema_entry, None
+
+
+# ── GitHub SQL file executor ─────────────────────────────────────────────────
+
+def _execute_sql_file(
+    filepath: str, owner: str, repo: str, branch: str,
+    headers: dict, pg_url: str,
+) -> tuple[int, str | None]:
+    """
+    Download a .sql file from GitHub and execute each statement against PostgreSQL.
+    Returns (statements_executed, error_or_None).
+    """
+    raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{filepath}"
+    resp = http_requests.get(raw_url, headers=headers, timeout=15)
+    if resp.status_code != 200:
+        return 0, f"HTTP {resp.status_code} fetching {filepath}"
+
+    sql_content = resp.text
+    if not sql_content.strip():
+        return 0, None
+
+    try:
+        from sqlalchemy import create_engine as _create_engine, text as _text
+        engine = _create_engine(pg_url)
+        statements = [s.strip() for s in sql_content.split(";") if s.strip()]
+        executed = 0
+        with engine.connect() as conn:
+            for stmt in statements:
+                try:
+                    conn.execute(_text(stmt))
+                    executed += 1
+                except Exception:
+                    pass  # Some statements may fail (e.g. CREATE TABLE IF NOT EXISTS already exists)
+            conn.commit()
+        engine.dispose()
+        return executed, None
+    except Exception as exc:
+        return 0, f"SQL execution failed: {exc}"
 
 
 # ── Shared helper ─────────────────────────────────────────────────────────────

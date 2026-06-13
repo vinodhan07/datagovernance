@@ -11,8 +11,7 @@
 
 import { useEffect, useState, useRef } from 'react'
 import { RefreshCw, ChevronDown, ChevronRight } from 'lucide-react'
-
-const BASE = 'http://localhost:8000'
+import { getAuditLogs, getIntegrationAuditLog, auditExportUrl } from '../api/client.js'
 
 // ── Event type → dot colour ───────────────────────────────────────────────────
 function dotColor(event_type, status) {
@@ -170,12 +169,11 @@ export default function AuditTimeline({ integrationId }) {
   const timerRef                = useRef(null)
 
   const fetchLogs = (off = 0, append = false) => {
-    const url = integrationId
-      ? `${BASE}/audit/logs/${integrationId}?limit=${limit}`
-      : `${BASE}/audit/logs?limit=${limit}&offset=${off}`
+    const call = integrationId
+      ? getIntegrationAuditLog(integrationId, limit)
+      : getAuditLogs({ limit, offset: off })
 
-    fetch(url)
-      .then(r => r.json())
+    call
       .then(data => {
         const incoming = data.logs || []
         setLogs(prev => append ? [...prev, ...incoming] : incoming)
@@ -202,8 +200,7 @@ export default function AuditTimeline({ integrationId }) {
   }
 
   const handleExport = () => {
-    const qs = integrationId ? `?integration_id=${integrationId}` : ''
-    window.open(`${BASE}/audit/export${qs}`, '_blank')
+    window.open(auditExportUrl(integrationId), '_blank')
   }
 
   return (

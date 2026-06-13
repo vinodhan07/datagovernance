@@ -128,149 +128,133 @@ def get_column_lineage(
 # GET /lineage/graph — Full DAG for visualization
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+def _build_graph_for_integration(
+    db,
+    integration_id: Optional[str] = None,
+    job_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Shared helper: build a nodes/edges graph from the lineage DB."""
+    q = db.query(LineageExecution)
+    if job_id:
+        q = q.filter(LineageExecution.job_id == job_id)
+    elif integration_id:
+        job_ids = [
+            j.id for j in
+            db.query(LineageJob).filter(LineageJob.integration_id == integration_id).all()
+        ]
+        if job_ids:
+            q = q.filter(LineageExecution.job_id.in_(job_ids))
+
+    execution = q.order_by(LineageExecution.created_at.desc()).first()
+    if execution and execution.dag_json:
+        return execution.dag_json
+
+    edges_q = db.query(LineageEdge)
+    if job_id:
+        edges_q = edges_q.filter(LineageEdge.job_id == job_id)
+    elif integration_id:
+        job_ids_list = [
+            j.id for j in
+            db.query(LineageJob).filter(LineageJob.integration_id == integration_id).all()
+        ]
+        if job_ids_list:
+            edges_q = edges_q.filter(LineageEdge.job_id.in_(job_ids_list))
+
+    edge_list = edges_q.all()
+    if not edge_list:
+        return {"nodes": [], "edges": []}
+
+    nodes_dict: dict[str, dict[str, Any]] = {}
+    graph_edges: list[dict[str, Any]] = []
+    edge_id_counter = 0
+
+    pair_transforms: dict[tuple[str, str], set[str]] = {}
+    pair_src_cols: dict[tuple[str, str], list[str]] = {}
+    pair_tgt_cols: dict[tuple[str, str], list[str]] = {}
+
+    for e in edge_list:
+        pair = (e.source_dataset, e.target_dataset)
+        transforms = e.transformations_json or []
+        for t in transforms:
+            pair_transforms.setdefault(pair, set()).add(t)
+        if e.source_column not in pair_src_cols.get(pair, []):
+            pair_src_cols.setdefault(pair, []).append(e.source_column)
+        if e.target_column not in pair_tgt_cols.get(pair, []):
+            pair_tgt_cols.setdefault(pair, []).append(e.target_column)
+
+    for pair, transforms in pair_transforms.items():
+        src_ds, tgt_ds = pair
+        src_cols = pair_src_cols.get(pair, [])
+        tgt_cols = pair_tgt_cols.get(pair, [])
+        src_id = f"ds:{src_ds}"
+        tgt_id = f"ds:{tgt_ds}"
+
+        if src_id not in nodes_dict:
+            nodes_dict[src_id] = {
+                "id": src_id, "type": "source",
+                "label": src_ds, "sub": "Source",
+                "status": "success",
+            }
+        else:
+            existing_cols: list[str] = nodes_dict[src_id].get("columns", [])
+            for c in src_cols:
+                if c not in existing_cols:
+                    existing_cols.append(c)
+
+        if tgt_id not in nodes_dict:
+            nodes_dict[tgt_id] = {
+                "id": tgt_id, "type": "destination",
+                "label": tgt_ds, "sub": "Target",
+                "status": "success",
+            }
+
+        sorted_transforms = sorted(transforms)
+        if sorted_transforms:
+            prev_node_id = src_id
+            for t_name in sorted_transforms:
+                op_id = f"op:{src_ds}:{tgt_ds}:{t_name}"
+                if op_id not in nodes_dict:
+                    nodes_dict[op_id] = {
+                        "id": op_id, "type": "operation",
+                        "label": t_name, "sub": "transform",
+                        "status": "success",
+                    }
+                graph_edges.append({
+                    "id": f"e{edge_id_counter}",
+                    "from": prev_node_id, "to": op_id,
+                    "label": "→", "status": "success",
+                })
+                edge_id_counter += 1
+                prev_node_id = op_id
+            graph_edges.append({
+                "id": f"e{edge_id_counter}",
+                "from": prev_node_id, "to": tgt_id,
+                "label": "load", "status": "success",
+            })
+            edge_id_counter += 1
+        else:
+            graph_edges.append({
+                "id": f"e{edge_id_counter}",
+                "from": src_id, "to": tgt_id,
+                "label": "→", "status": "success",
+            })
+            edge_id_counter += 1
+
+    return {"nodes": list(nodes_dict.values()), "edges": graph_edges}
+
+
 @router.get("/graph")
 def get_lineage_graph_data(
     job_id: Optional[str] = Query(None, description="Job ID to show graph for"),
     integration_id: Optional[str] = Query(None, description="Integration ID"),
 ) -> dict[str, Any]:
-    """
-    Return the transformation DAG in React Flow compatible format.
-
-    Returns nodes (datasets + operations) and edges with column metadata.
-    """
+    """Return the transformation DAG in React Flow compatible format."""
     if not is_db_available():
         return {"nodes": [], "edges": []}
 
     db = SessionLocal()
     try:
-        # Find the latest execution with a DAG
-        q = db.query(LineageExecution)
-        if job_id:
-            q = q.filter(LineageExecution.job_id == job_id)
-        elif integration_id:
-            # Find jobs for this integration
-            job_ids = [
-                j.id for j in
-                db.query(LineageJob).filter(LineageJob.integration_id == integration_id).all()
-            ]
-            if job_ids:
-                q = q.filter(LineageExecution.job_id.in_(job_ids))
-
-        execution = q.order_by(LineageExecution.created_at.desc()).first()
-
-        if execution and execution.dag_json:
-            return execution.dag_json
-
-        # Fallback: build dataset-level graph from edges.
-        # Groups by (source_dataset, target_dataset) pair so we get one operation
-        # node per transformation type — not one per (column, transform) combination.
-        edges_q = db.query(LineageEdge)
-        if integration_id:
-            job_ids_list = [
-                j.id for j in
-                db.query(LineageJob).filter(LineageJob.integration_id == integration_id).all()
-            ]
-            if job_ids_list:
-                edges_q = edges_q.filter(LineageEdge.job_id.in_(job_ids_list))
-
-        edge_list = edges_q.all()
-        if not edge_list:
-            return {"nodes": [], "edges": []}
-
-        nodes_dict: dict[str, dict[str, Any]] = {}
-        graph_edges: list[dict[str, Any]] = []
-        edge_id_counter = 0
-
-        # Collect unique (src_ds, tgt_ds) pairs and their distinct transforms + columns
-        pair_transforms: dict[tuple[str, str], set[str]] = {}
-        pair_src_cols: dict[tuple[str, str], list[str]] = {}
-        pair_tgt_cols: dict[tuple[str, str], list[str]] = {}
-
-        for e in edge_list:
-            pair = (e.source_dataset, e.target_dataset)
-            transforms = e.transformations_json or []
-            for t in transforms:
-                pair_transforms.setdefault(pair, set()).add(t)
-            if e.source_column not in pair_src_cols.get(pair, []):
-                pair_src_cols.setdefault(pair, []).append(e.source_column)
-            if e.target_column not in pair_tgt_cols.get(pair, []):
-                pair_tgt_cols.setdefault(pair, []).append(e.target_column)
-
-        # Build dataset and operation nodes per (src, tgt) pair
-        for pair, transforms in pair_transforms.items():
-            src_ds, tgt_ds = pair
-            src_cols = pair_src_cols.get(pair, [])
-            tgt_cols = pair_tgt_cols.get(pair, [])
-
-            src_id = f"ds:{src_ds}"
-            tgt_id = f"ds:{tgt_ds}"
-
-            if src_id not in nodes_dict:
-                nodes_dict[src_id] = {
-                    "id": src_id,
-                    "type": "dataset",
-                    "data": {"label": f"{src_ds} (Source)", "columns": src_cols},
-                    "position": {"x": 0, "y": 0},
-                }
-            else:
-                # Merge columns if node already exists
-                existing_cols: list[str] = nodes_dict[src_id]["data"]["columns"]
-                for c in src_cols:
-                    if c not in existing_cols:
-                        existing_cols.append(c)
-
-            if tgt_id not in nodes_dict:
-                nodes_dict[tgt_id] = {
-                    "id": tgt_id,
-                    "type": "dataset",
-                    "data": {"label": f"{tgt_ds} (Target)", "columns": tgt_cols},
-                    "position": {"x": 600, "y": 0},
-                }
-
-            sorted_transforms = sorted(transforms)
-            if sorted_transforms:
-                # One operation node per unique transform across the whole pair
-                prev_node_id = src_id
-                for t_name in sorted_transforms:
-                    op_id = f"op:{src_ds}:{tgt_ds}:{t_name}"
-                    if op_id not in nodes_dict:
-                        nodes_dict[op_id] = {
-                            "id": op_id,
-                            "type": "operation",
-                            "data": {"label": t_name, "operation": t_name},
-                            "position": {"x": 300, "y": 0},
-                        }
-                    graph_edges.append({
-                        "id": f"e{edge_id_counter}",
-                        "source": prev_node_id,
-                        "target": op_id,
-                        "data": {"columns": src_cols},
-                    })
-                    edge_id_counter += 1
-                    prev_node_id = op_id
-
-                graph_edges.append({
-                    "id": f"e{edge_id_counter}",
-                    "source": prev_node_id,
-                    "target": tgt_id,
-                    "data": {"columns": tgt_cols},
-                })
-                edge_id_counter += 1
-            else:
-                # No transforms recorded — direct dataset-to-dataset edge
-                graph_edges.append({
-                    "id": f"e{edge_id_counter}",
-                    "source": src_id,
-                    "target": tgt_id,
-                    "data": {"columns": src_cols},
-                })
-                edge_id_counter += 1
-
-        nodes = list(nodes_dict.values())
-        _layout_nodes(nodes)
-
-        return {"nodes": nodes, "edges": graph_edges}
-
+        return _build_graph_for_integration(db, integration_id=integration_id, job_id=job_id)
     finally:
         db.close()
 
@@ -553,37 +537,27 @@ def get_spline_graph_url(
         .first()
     )
 
-    if not run or not run.spline_plan_id:
-        return {"spline_url": None, "last_run": None}
-
-    import config
-    spline_web_ui_url = config.SPLINE_WEB_UI
-    consumer_url      = config.SPLINE_CONSUMER
-
-    # Attempt to resolve the event ID for the plan
-    event_id = None
-    try:
-        resp = requests.get(f"{consumer_url}/execution-events?limit=200", timeout=5)
-        if resp.status_code == 200:
-            items = resp.json().get("items", [])
-            for item in items:
-                if item.get("executionPlanId") == run.spline_plan_id:
-                    event_id = item.get("executionEventId")
-                    break
-    except Exception as exc:
-        logger.warning("Error fetching event ID from Spline consumer: %s", exc)
-
-    if event_id:
-        spline_url = f"{spline_web_ui_url}/app/events/overview/{event_id}"
-    else:
-        spline_url = f"{spline_web_ui_url}/app/plans/overview/{run.spline_plan_id}"
-
-    return {
-        "spline_url": spline_url,
-        "last_run": {
+    last_run_data = None
+    if run:
+        last_run_data = {
             "id": run.id,
             "status": run.status,
             "started_at": run.started_at,
             "completed_at": run.completed_at,
-        },
+            "tables_scanned": run.tables_scanned or [],
+            "row_counts": run.row_counts or {},
+            "integration_name": run.integration_name,
+        }
+
+    # ── Build Spline Web UI URL directly from stored plan ID ─────────────────
+    spline_url = None
+    if run and run.spline_plan_id:
+        import config
+        # Use plan overview URL — no need to re-query consumer to find event ID
+        spline_url = f"{config.SPLINE_WEB_UI}/app/plans/overview/{run.spline_plan_id}"
+
+    return {
+        "spline_url": spline_url,
+        "last_run": last_run_data,
     }
+
