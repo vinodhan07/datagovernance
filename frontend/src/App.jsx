@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { LayoutGrid, Plug, Shield, BookOpen, ShieldCheck, Database, Brain, LogOut, User, X, CheckCircle } from 'lucide-react'
-import Dashboard      from './pages/Dashboard.jsx'
-import Connectors     from './pages/Connectors.jsx'
-import DataGovernance from './pages/DataGovernance.jsx'
-import AiGovernance   from './pages/AiGovernance.jsx'
-import Login          from './pages/Login.jsx'
+import Dashboard      from './views/Dashboard.jsx'
+import Connectors     from './modules/registry/Connectors.jsx'
+import DataGovernance from './views/Workspace.jsx'
+import AiGovernance   from './modules/guardian/AiGovernance.jsx'
+import Login          from './views/Login.jsx'
 import { AuthProvider, useAuth } from './context/AuthContext.jsx'
-import { getIntegrations } from './api/client.js'
+import { getIntegrations } from './core/api.js'
 
 const NAV = [
   { id: 'dashboard',       label: 'Dashboard',       Icon: LayoutGrid },
