@@ -243,3 +243,40 @@ class QualityFinding(Base):
     check_type  = Column(String(100))
     status      = Column(String(20))    # pass | fail | warn
     value       = Column(String(255))   # actual measured value
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# AI Governance
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class AIModel(Base):
+    """Registry of AI / GenAI models used by the organisation."""
+    __tablename__ = "ai_models"
+
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    name           = Column(String(255), nullable=False)
+    provider       = Column(String(100))          # OpenAI | Anthropic | HuggingFace | Custom
+    model_type     = Column(String(50))           # LLM | ML | CV | NLP
+    version        = Column(String(50))
+    purpose        = Column(Text)
+    owner          = Column(String(255))
+    risk_level     = Column(String(20), default="minimal")  # minimal | limited | high | unacceptable
+    status         = Column(String(20), default="active")   # active | deprecated | under_review
+    uses_pii       = Column(Integer, default=0)   # 0=No 1=Yes (bool as int for SQLite compat)
+    autonomous     = Column(Integer, default=0)   # 0=No 1=Yes — fully automated decisions
+    integration_id = Column(String(100))          # optional link to a connector's data source
+    created_at     = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at     = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class AIComplianceCheck(Base):
+    """Per-model compliance checklist items."""
+    __tablename__ = "ai_compliance_checks"
+
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    model_id     = Column(Integer, nullable=False)  # logical ref to ai_models.id
+    check_name   = Column(String(255), nullable=False)
+    check_status = Column(String(20), default="pending")  # pass | fail | pending
+    notes        = Column(Text)
+    checked_at   = Column(DateTime(timezone=True))
+    created_at   = Column(DateTime(timezone=True), server_default=func.now())

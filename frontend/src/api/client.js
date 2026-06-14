@@ -147,3 +147,14 @@ export const getLineageRuns     = (integrationId) =>
 
 export const getLineageRunDetail = (integrationId, runId) =>
   request(`/lineage/${integrationId}/runs/${runId}`)
+
+// ── AI Governance ─────────────────────────────────────────────────────────────
+export const getAiModels            = ()        => request('/ai-governance/models')
+export const createAiModel          = (data)    => request('/ai-governance/models', { method: 'POST', body: JSON.stringify(data) })
+export const updateAiModel          = (id, data)=> request(`/ai-governance/models/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+export const deleteAiModel          = (id)      => request(`/ai-governance/models/${id}`, { method: 'DELETE' })
+export const getModelCompliance     = (id)      => request(`/ai-governance/models/${id}/compliance`)
+export const addComplianceCheck     = (id, data)=> request(`/ai-governance/models/${id}/compliance`, { method: 'POST', body: JSON.stringify(data) })
+export const updateComplianceCheck  = (id, data)=> request(`/ai-governance/compliance/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+export const deleteComplianceCheck  = (id)      => request(`/ai-governance/compliance/${id}`, { method: 'DELETE' })
+export const getAiGovernanceSummary = ()        => request('/ai-governance/summary')

@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import audit, auth, catalog, connectors, lineage, pipeline, quality
+from routers import audit, auth, catalog, connectors, lineage, pipeline, quality, ai_governance
 
 app = FastAPI(title="DataGuard ETL Lineage Platform")
 
@@ -20,6 +20,7 @@ app.include_router(connectors.router, prefix="/connectors", tags=["Connectors"])
 app.include_router(lineage.router,    prefix="/lineage",    tags=["Lineage"])
 app.include_router(pipeline.router,   prefix="/pipeline",   tags=["Pipeline"])
 app.include_router(quality.router,    prefix="/quality",    tags=["Quality"])
+app.include_router(ai_governance.router, prefix="/ai-governance", tags=["AI Governance"])
 
 
 @app.get("/")
