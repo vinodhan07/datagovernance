@@ -11,6 +11,8 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, text
 
+from src.core.auth import get_current_user
+from src.domain.entities import User
 import src.core.store as store
 from src.core.database import get_db, is_db_available
 from src.domain.schemas import IntegrationCreate, TestResult
@@ -23,7 +25,7 @@ router = APIRouter()
 # ── List / create / delete integrations ───────────────────────────────────────
 
 @router.get("/integrations")
-def get_integrations(db: Session = Depends(get_db)):
+def get_integrations(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if is_db_available():
         return [
             {
@@ -34,7 +36,8 @@ def get_integrations(db: Session = Depends(get_db)):
                 "status": "active",
                 "created_at": i.created_at,
             }
-            for i in db.query(Integration).all()
+            # Return integrations owned by this user, or any migration/old ones that don't have an owner yet
+            for i in db.query(Integration).filter((Integration.owner == current_user.username) | (Integration.owner.is_(None))).all()
         ]
     return store.list_integrations()
 
@@ -51,13 +54,15 @@ def get_mariadb_template_id():
 
 
 @router.post("/integrations", status_code=201)
-def add_integration(data: IntegrationCreate, db: Session = Depends(get_db)):
+def add_integration(data: IntegrationCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     tmpl = store.get_template(data.template_id)
     if not tmpl:
         raise HTTPException(404, f"Template '{data.template_id}' not found. Available: mariadb-builtin, github-builtin")
 
     if is_db_available():
         new_int = save_integration(db, data.credentials, provider=tmpl["provider_name"], name=data.name)
+        new_int.owner = current_user.username
+        db.commit()
         return {
             "id": str(new_int.id),
             "name": new_int.name,
@@ -69,9 +74,9 @@ def add_integration(data: IntegrationCreate, db: Session = Depends(get_db)):
 
 
 @router.delete("/integrations/{integration_id}", status_code=204)
-def delete_integration(integration_id: str, db: Session = Depends(get_db)):
+def delete_integration(integration_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if is_db_available():
-        obj = db.query(Integration).filter(Integration.id == integration_id).first()
+        obj = db.query(Integration).filter(Integration.id == integration_id, (Integration.owner == current_user.username) | (Integration.owner.is_(None))).first()
         if obj:
             db.delete(obj)
             db.commit()

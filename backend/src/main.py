@@ -30,7 +30,19 @@ app.include_router(ml_governance.router, prefix="/ml-governance", tags=["ML Gove
 
 @app.get("/")
 async def root():
+    frontend_dist_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../frontend/dist"))
+    index_path = os.path.join(frontend_dist_path, "index.html")
+    if os.path.exists(index_path):
+        from fastapi.responses import FileResponse
+        return FileResponse(index_path)
     return {"message": "DataGuard ETL Lineage API is online"}
+
+
+from fastapi.staticfiles import StaticFiles
+
+frontend_dist_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../frontend/dist"))
+if os.path.exists(frontend_dist_path):
+    app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dist_path, "assets")), name="assets")
 
 
 @app.get("/dashboard/stats")
@@ -76,6 +88,31 @@ async def dashboard_stats():
         "quality_rules": quality_rules_count,
         "quality_score": latest_quality_score,
     }
+
+
+@app.get("/{catchall:path}")
+async def serve_frontend(catchall: str):
+    if not catchall:
+        return await root()
+    
+    parts = [p for p in catchall.split("/") if p]
+    if len(parts) > 1 and parts[0] in ["auth", "audit", "catalog", "connectors", "lineage", "pipeline", "quality", "ai-governance", "ml-governance", "dashboard"]:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Not Found")
+        
+    frontend_dist_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../frontend/dist"))
+    file_path = os.path.join(frontend_dist_path, catchall)
+    if os.path.exists(file_path) and os.path.isfile(file_path):
+        from fastapi.responses import FileResponse
+        return FileResponse(file_path)
+        
+    index_path = os.path.join(frontend_dist_path, "index.html")
+    if os.path.exists(index_path):
+        from fastapi.responses import FileResponse
+        return FileResponse(index_path)
+        
+    from fastapi import HTTPException
+    raise HTTPException(status_code=404, detail="Not Found")
 
 
 

@@ -7,6 +7,7 @@ import {
   getIntegrations, getCapabilities, getLatestPipelineRun,
   getCatalogTables, getQualityScore, getQualityScans, getQualityScanDetail, qualityScanUrl
 } from '../core/api.js'
+import { useAuth } from '../context/AuthContext.jsx'
 
 const TABS = [
   { id: 'lineage',  label: 'Lineage',  icon: GitBranch },
@@ -211,10 +212,19 @@ function QualityTab({ score, findings, loading, onRunScan }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function DataGovernance({ onNavigate }) {
+  const { user } = useAuth()
   const [integrations,   setIntegrations]   = useState([])
   const [loadingList,    setLoadingList]     = useState(true)
   const [selected,       setSelected]       = useState(null)
   const [activeTab,      setActiveTab]      = useState('lineage')
+
+  useEffect(() => {
+    if (!user) {
+      for (const k in _cache) {
+        delete _cache[k]
+      }
+    }
+  }, [user])
 
   // Per-run state — initialised from cache if available
   const [capabilities,   setCapabilities]   = useState(null)

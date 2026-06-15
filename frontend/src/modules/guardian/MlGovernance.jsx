@@ -7,9 +7,9 @@ import {
 import {
   getMlflowConnection, connectMlflow, disconnectMlflow,
   getMlflowRegistry, getMlflowVersions,
-  getMlModels, createMlModel, deleteMlModel,
+  getMlModels, createMlModel, updateMlModel, deleteMlModel,
   getMlScans, getMlScanStream, getMlSummary,
-  getIntegrations, syncMlflowModels,
+  getIntegrations, syncMlflowModels, trainAndRegisterMlModel,
 } from '../../core/api.js'
 import { getAuthHeader } from '../../core/api.js'
 
@@ -302,6 +302,137 @@ function ConfigureModal({ registryModel, existingConfig, onSave, onClose }) {
   )
 }
 
+// ── Train & Register Modal ───────────────────────────────────────────────────
+function TrainRegisterModal({ onSave, onClose }) {
+  const [saving, setSaving] = useState(false)
+  const [form, setForm] = useState({
+    model_name:      '',
+    task_type:       'classification',
+    db_host:         '',
+    db_port:         '',
+    db_user:         '',
+    db_password:     '',
+    db_name:         '',
+    target_table:    '',
+    target_column:   '',
+    feature_columns: '',
+    protected_attrs: '',
+  })
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const handleTrain = async () => {
+    setSaving(true)
+    try {
+      await onSave(form)
+      onClose()
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const inp = {
+    width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 7,
+    border: `1px solid ${C.border}`, background: C.bg, color: C.primary,
+    fontSize: 13, fontFamily: 'inherit', outline: 'none',
+  }
+  const lbl = { fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 4, display: 'block' }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ background: C.surface, borderRadius: 14, padding: 28, width: 550, maxWidth: '95vw', border: `1px solid ${C.border}`, maxHeight: '90vh', overflowY: 'auto' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 16, color: C.primary }}>Train &amp; Register Model</div>
+            <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>Train a Random Forest model on MariaDB and register to MLflow</div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.hint }}><X size={18} /></button>
+        </div>
+
+        <div style={{ display: 'grid', gap: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={lbl}>Model Name <span style={{ color: '#ef4444' }}>*</span></label>
+              <input value={form.model_name} onChange={e => set('model_name', e.target.value)} placeholder="e.g. adult_income_rf" style={inp} />
+            </div>
+            <div>
+              <label style={lbl}>Task Type</label>
+              <select value={form.task_type} onChange={e => set('task_type', e.target.value)} style={inp}>
+                <option value="classification">Classification</option>
+                <option value="regression">Regression</option>
+              </select>
+            </div>
+          </div>
+
+          <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: 12, background: C.bg }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.primary, marginBottom: 8 }}>Database Connection Credentials</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
+              <div>
+                <label style={lbl}>Host</label>
+                <input value={form.db_host} onChange={e => set('db_host', e.target.value)} placeholder="e.g. 127.0.0.1" style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>Port</label>
+                <input value={form.db_port} onChange={e => set('db_port', e.target.value)} placeholder="e.g. 3307" style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>Database Name</label>
+                <input value={form.db_name} onChange={e => set('db_name', e.target.value)} placeholder="e.g. governance_db" style={inp} />
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <div>
+                <label style={lbl}>Username</label>
+                <input value={form.db_user} onChange={e => set('db_user', e.target.value)} placeholder="e.g. root" style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>Password</label>
+                <input type="password" value={form.db_password} onChange={e => set('db_password', e.target.value)} placeholder="••••••••" style={inp} />
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <label style={lbl}>Target Table <span style={{ color: '#ef4444' }}>*</span></label>
+              <input value={form.target_table} onChange={e => set('target_table', e.target.value)} placeholder="e.g. adult_income" style={inp} />
+            </div>
+            <div>
+              <label style={lbl}>Target Column <span style={{ color: '#ef4444' }}>*</span></label>
+              <input value={form.target_column} onChange={e => set('target_column', e.target.value)} placeholder="e.g. income" style={inp} />
+            </div>
+          </div>
+
+          <div>
+            <label style={lbl}>Feature Columns <span style={{ fontWeight: 400, color: C.hint }}>(comma-separated — leave blank for all)</span></label>
+            <input value={form.feature_columns} onChange={e => set('feature_columns', e.target.value)} placeholder="e.g. age, workclass, education" style={inp} />
+          </div>
+
+          <div>
+            <label style={lbl}>Protected Attributes <span style={{ fontWeight: 400, color: C.hint }}>(for bias scans — comma-separated)</span></label>
+            <input value={form.protected_attrs} onChange={e => set('protected_attrs', e.target.value)} placeholder="e.g. sex, race" style={inp} />
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 22, justifyContent: 'flex-end' }}>
+          <button onClick={onClose} style={{ padding: '9px 18px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'transparent', color: C.muted, fontSize: 13, cursor: 'pointer' }}>Cancel</button>
+          <button onClick={handleTrain} disabled={saving || !form.model_name || !form.target_table || !form.target_column} style={{
+            padding: '9px 22px', borderRadius: 8, border: 'none',
+            background: saving || !form.model_name || !form.target_table || !form.target_column ? C.panel : C.teal,
+            color: saving || !form.model_name || !form.target_table || !form.target_column ? C.muted : '#fff',
+            fontSize: 13, fontWeight: 600,
+            cursor: saving || !form.model_name || !form.target_table || !form.target_column ? 'not-allowed' : 'pointer',
+          }}>
+            {saving ? 'Training & Scanning…' : 'Train & Scan Model'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Bias / Drift / Shap display ────────────────────────────────────────────────
 function BiasResults({ data }) {
   if (!data) return <div style={{ color: C.muted, fontSize: 13 }}>No bias results yet.</div>
@@ -492,7 +623,7 @@ function ModelCard({ registryModel, config, lastScan, onConfigure, onDelete, onS
   const [scanLines, setScanLines] = useState([])
   const [liveResults, setLive]    = useState(null)
 
-  const latestV       = registryModel.latest_versions?.[0]
+  const latestV       = registryModel?.latest_versions?.[0]
   const hasScanData   = lastScan?.status === 'completed'
   const biasBadge     = hasScanData ? lastScan.bias_results?.overall_verdict : null
   const driftBadge    = hasScanData ? lastScan.drift_results?.verdict : null
@@ -541,16 +672,16 @@ function ModelCard({ registryModel, config, lastScan, onConfigure, onDelete, onS
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <Brain size={16} color={C.teal} />
-              <span style={{ fontWeight: 700, fontSize: 14, color: C.primary }}>{registryModel.name}</span>
-              {latestV && <Pill label={`v${latestV.version}`} color="#8b5cf6" />}
-              {latestV && <Pill label={latestV.stage || 'None'} color={stageColor(latestV.stage || 'None')} />}
+              <span style={{ fontWeight: 700, fontSize: 14, color: C.primary }}>{registryModel?.name || config?.name || 'Unnamed Model'}</span>
+              {(latestV || config) && <Pill label={`v${latestV?.version || config?.mlflow_version || '1'}`} color="#8b5cf6" />}
+              {(latestV || config) && <Pill label={latestV?.stage || config?.mlflow_stage || 'None'} color={stageColor(latestV?.stage || config?.mlflow_stage || 'None')} />}
               {/* Last scan badges */}
               {biasBadge  && verdictBadge(biasBadge)}
               {driftBadge && driftBadge !== 'stable' && verdictBadge(driftBadge)}
             </div>
 
-            {registryModel.description && (
-              <div style={{ fontSize: 12, color: C.muted, marginTop: 5 }}>{registryModel.description.slice(0, 120)}</div>
+            {(registryModel?.description || config?.description) && (
+              <div style={{ fontSize: 12, color: C.muted, marginTop: 5 }}>{(registryModel?.description || config?.description || '').slice(0, 120)}</div>
             )}
 
             {latestV?.metrics && Object.keys(latestV.metrics).length > 0 && (
@@ -652,6 +783,7 @@ export default function MlGovernance() {
   const [refreshing, setRefreshing]     = useState(false)
   const [syncing, setSyncing]           = useState(false)
   const [configModal, setConfigModal]   = useState(null)
+  const [trainModal, setTrainModal]     = useState(false)
 
   // Load last scan for every configured model
   const loadScans = async (cfgs) => {
@@ -710,19 +842,21 @@ export default function MlGovernance() {
 
   const handleSaveConfig = async (payload) => {
     const existing = configs.find(c => c.mlflow_model_name === payload.mlflow_model_name)
-    if (existing) await deleteMlModel(existing.id)
-    const created = await createMlModel(payload)
-    const newCfgs = [...configs.filter(c => c.mlflow_model_name !== payload.mlflow_model_name), created]
+    let configObj
+    if (existing) {
+      configObj = await updateMlModel(existing.id, payload)
+    } else {
+      configObj = await createMlModel(payload)
+    }
+    const newCfgs = [...configs.filter(c => c.mlflow_model_name !== payload.mlflow_model_name), configObj]
     setConfigs(newCfgs)
     await loadScans(newCfgs)
   }
 
   const handleDeleteConfig = async (id) => {
-    if (!confirm('Remove governance configuration for this model?')) return
+    if (!confirm('Remove governance configuration and delete registered model from MLflow?')) return
     await deleteMlModel(id)
-    const newCfgs = configs.filter(c => c.id !== id)
-    setConfigs(newCfgs)
-    setLastScans(prev => { const n = { ...prev }; delete n[id]; return n })
+    await loadAll()
   }
 
   const handleSyncAndScan = async () => {
@@ -748,6 +882,11 @@ export default function MlGovernance() {
     }
   }
 
+  const handleTrainModel = async (payload) => {
+    await trainAndRegisterMlModel(payload)
+    await loadAll()
+  }
+
   const configFor   = name => configs.find(c => c.mlflow_model_name === name) || null
   const lastScanFor = name => { const cfg = configFor(name); return cfg ? lastScans[cfg.id] || null : null }
 
@@ -760,6 +899,21 @@ export default function MlGovernance() {
   }
 
   const connected = connection?.status === 'connected'
+
+  // Get all unique model names from registry and configs
+  const allModelNames = Array.from(new Set([
+    ...registry.map(m => m.name),
+    ...configs.map(c => c.mlflow_model_name)
+  ].filter(Boolean)))
+
+  const getRegistryModel = (name) => {
+    return registry.find(m => m.name === name) || {
+      name: name,
+      description: 'Custom configured model (not found in live MLflow registry)',
+      latest_versions: [],
+      mlflow_url: connection?.url
+    }
+  }
 
   return (
     <div style={{ padding: '32px 36px', maxWidth: 1100, margin: '0 auto' }}>
@@ -846,9 +1000,17 @@ export default function MlGovernance() {
             }}>
               <RefreshCw size={13} className={refreshing ? 'spin' : ''} /> Refresh
             </button>
+            <button onClick={() => setTrainModal(true)} style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '7px 14px', borderRadius: 8, border: 'none',
+              background: C.teal, color: '#fff', fontSize: 12, cursor: 'pointer',
+              fontWeight: 600,
+            }}>
+              <Brain size={13} /> Train &amp; Register Model
+            </button>
           </div>
 
-          {registry.length === 0 ? (
+          {allModelNames.length === 0 ? (
             <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '48px 24px', textAlign: 'center', color: C.muted }}>
               <Brain size={32} color={C.hint} style={{ marginBottom: 12 }} />
               <div style={{ fontWeight: 600, marginBottom: 6, color: C.primary }}>No registered models found</div>
@@ -856,12 +1018,12 @@ export default function MlGovernance() {
             </div>
           ) : (
             <div style={{ display: 'grid', gap: 14 }}>
-              {registry.map(m => (
+              {allModelNames.map(name => (
                 <ModelCard
-                  key={m.name}
-                  registryModel={m}
-                  config={configFor(m.name)}
-                  lastScan={lastScanFor(m.name)}
+                  key={name}
+                  registryModel={getRegistryModel(name)}
+                  config={configFor(name)}
+                  lastScan={lastScanFor(name)}
                   onConfigure={rm => setConfigModal(rm)}
                   onDelete={handleDeleteConfig}
                   onScanComplete={loadAll}
@@ -892,6 +1054,14 @@ export default function MlGovernance() {
           existingConfig={configFor(configModal.name)}
           onSave={handleSaveConfig}
           onClose={() => setConfigModal(null)}
+        />
+      )}
+
+      {/* Train & Register modal */}
+      {trainModal && (
+        <TrainRegisterModal
+          onSave={handleTrainModel}
+          onClose={() => setTrainModal(false)}
         />
       )}
 

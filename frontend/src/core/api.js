@@ -1,4 +1,6 @@
-const BASE = 'http://localhost:8000'
+const BASE = typeof window !== 'undefined' && window.location.hostname === 'localhost' && window.location.port === '5173'
+  ? 'http://localhost:8000'
+  : (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8000')
 
 function _authHeader() {
   const token = localStorage.getItem('dataguard_token')
@@ -18,7 +20,11 @@ async function request(path, options = {}) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
     throw new Error(err.detail || `HTTP ${res.status}`)
   }
-  return res.json()
+  if (res.status === 204) {
+    return null
+  }
+  const text = await res.text()
+  return text ? JSON.parse(text) : null
 }
 
 // ── Auth ───────────────────────────────────────────────────────────────────
@@ -43,6 +49,9 @@ export const createTemplate   = (data) => request('/connectors/templates', {
 export const getIntegrations    = ()     => request('/connectors/integrations')
 export const createIntegration  = (data) => request('/connectors/integrations', {
   method: 'POST', body: JSON.stringify(data),
+})
+export const deleteIntegration  = (id)   => request(`/connectors/integrations/${id}`, {
+  method: 'DELETE',
 })
 export const testConnection = (id) =>
   request(`/connectors/integrations/${id}/test`, { method: 'POST' })
@@ -181,3 +190,4 @@ export const getMlScan       = (scanId)      => request(`/ml-governance/scans/${
 export const getMlSummary    = ()            => request('/ml-governance/summary')
 export const getMlScanStream = (modelId)     => `${BASE}/ml-governance/models/${modelId}/scan`
 export const syncMlflowModels = ()           => request('/ml-governance/sync-and-scan', { method: 'POST' })
+export const trainAndRegisterMlModel = (data) => request('/ml-governance/train-register', { method: 'POST', body: JSON.stringify(data) })

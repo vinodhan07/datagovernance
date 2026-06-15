@@ -1,0 +1,39 @@
+artifact_path: /home/vinodhan/Desktop/Project/DATA GOVERENCE/backend/mlruns/2/models/m-7dac03fc823d47b7ae5aea035ff91ba8/artifacts
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.12.9
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.9.0
+    skops_trusted_types: null
+is_signature_from_type_hint: false
+mlflow_version: 3.13.0
+model_id: m-7dac03fc823d47b7ae5aea035ff91ba8
+model_size_bytes: 351002
+model_uuid: m-7dac03fc823d47b7ae5aea035ff91ba8
+prompts: null
+run_id: 1deaa2f7dcaf4f698e6636666e37a4ce
+signature:
+  inputs: '[{"type": "double", "name": "age", "required": true}, {"type": "double",
+    "name": "workclass", "required": true}, {"type": "double", "name": "fnlwgt", "required":
+    true}, {"type": "double", "name": "education", "required": true}, {"type": "double",
+    "name": "education_num", "required": true}, {"type": "double", "name": "marital_status",
+    "required": true}, {"type": "double", "name": "occupation", "required": true},
+    {"type": "double", "name": "relationship", "required": true}, {"type": "double",
+    "name": "race", "required": true}, {"type": "double", "name": "sex", "required":
+    true}, {"type": "double", "name": "capital_gain", "required": true}, {"type":
+    "double", "name": "capital_loss", "required": true}, {"type": "double", "name":
+    "hours_per_week", "required": true}, {"type": "double", "name": "native_country",
+    "required": true}]'
+  outputs: '[{"type": "tensor", "tensor-spec": {"dtype": "int64", "shape": [-1]}}]'
+  params: null
+type_hint_from_example: false
+utc_time_created: '2026-06-15 10:11:11.837139'

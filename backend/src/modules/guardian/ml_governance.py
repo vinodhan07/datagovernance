@@ -342,6 +342,203 @@ def manual_sync_and_scan(background_tasks: BackgroundTasks, db: Session = Depend
     return {"message": "Sync and auto-scan started in background."}
 
 
+@router.post("/train-register", status_code=201)
+def train_and_register_endpoint(data: dict, db: Session = Depends(get_db)):
+    conn = db.query(MLflowConnection).filter(MLflowConnection.status == "connected").first()
+    if not conn:
+        raise HTTPException(400, "No active MLflow connection. Connect to MLflow server first.")
+        
+    model_name = (data.get("model_name") or "").strip()
+    if not model_name:
+        raise HTTPException(400, "Model Name is required")
+        
+    task_type = data.get("task_type", "classification")
+    db_host = data.get("db_host") or "127.0.0.1"
+    
+    db_port_val = data.get("db_port")
+    db_port = int(db_port_val) if db_port_val and str(db_port_val).strip() else 3307
+    
+    db_user = data.get("db_user") or "root"
+    db_password = data.get("db_password") or "root123"
+    db_name = data.get("db_name") or "governance_db"
+    target_table = (data.get("target_table") or "").strip()
+    target_column = (data.get("target_column") or "").strip()
+    feature_columns = data.get("feature_columns", [])
+    protected_attrs = data.get("protected_attrs", [])
+    
+    if not target_table:
+        raise HTTPException(400, "Target Table is required")
+    if not target_column:
+        raise HTTPException(400, "Target Column is required")
+        
+    # Parse feature_columns / protected_attrs if they are strings
+    if isinstance(feature_columns, str):
+        feature_columns = [s.strip() for s in feature_columns.split(",") if s.strip()]
+    if isinstance(protected_attrs, str):
+        protected_attrs = [s.strip() for s in protected_attrs.split(",") if s.strip()]
+
+    # Connect to database and load data
+    from sqlalchemy import create_engine as _ce
+    try:
+        db_url = f"mysql+pymysql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+        mariadb_engine = _ce(db_url)
+        df = pd.read_sql(f"SELECT * FROM `{target_table}` LIMIT 5000", mariadb_engine)
+    except Exception as e:
+        raise HTTPException(400, f"Failed to load data from database: {e}")
+        
+    if df.empty:
+        raise HTTPException(400, "The dataset table is empty")
+        
+    if target_column not in df.columns:
+        raise HTTPException(400, f"Target column '{target_column}' not found in the table")
+        
+    # Find or dynamically create/save an integration for these database credentials
+    from src.core.security import encrypt_password
+    import uuid
+    
+    existing_intg = db.query(Integration).filter(
+        Integration.host == db_host,
+        Integration.port == db_port,
+        Integration.database_name == db_name,
+        Integration.username == db_user
+    ).first()
+    
+    if existing_intg:
+        integration_id = existing_intg.id
+    else:
+        integration_id = f"mariadb_auto_{uuid.uuid4().hex[:8]}"
+        pwd_enc = encrypt_password(db_password)
+        new_intg = Integration(
+            id=integration_id,
+            name=f"Auto DB {db_name} ({db_host})",
+            provider="MariaDB",
+            category="database",
+            host=db_host,
+            port=db_port,
+            database_name=db_name,
+            username=db_user,
+            password_encrypted=pwd_enc
+        )
+        db.add(new_intg)
+        db.commit()
+
+    # Preprocess data and train
+    import mlflow
+    import mlflow.sklearn
+    from mlflow.models.signature import infer_signature
+    from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+    from sklearn.model_selection import train_test_split
+    from sklearn.preprocessing import LabelEncoder
+    from sklearn.metrics import accuracy_score, r2_score
+    
+    available = [c for c in feature_columns if c in df.columns] if feature_columns else [c for c in df.columns if c != target_column]
+    if not available:
+        raise HTTPException(400, "No valid feature columns found")
+        
+    X = df[available].copy()
+    for col in X.select_dtypes(include=["object", "category"]).columns:
+        le = LabelEncoder()
+        X[col] = le.fit_transform(X[col].astype(str))
+    X = X.fillna(X.median(numeric_only=True)).fillna(0)
+    X = X.astype(float) # Cast to float to avoid schema mismatches
+    
+    y_raw = df[target_column]
+    if task_type == "classification" or y_raw.dtype == object:
+        le = LabelEncoder()
+        y = le.fit_transform(y_raw.astype(str))
+        is_clf = True
+    else:
+        y = y_raw.values
+        is_clf = False
+        
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
+    
+    # Train, log & register to MLflow
+    try:
+        mlflow.set_tracking_uri(conn.url)
+        mlflow.set_experiment("dataguard_ml_governance")
+        
+        if is_clf:
+            model_obj = RandomForestClassifier(n_estimators=50, max_depth=6, random_state=42)
+            model_obj.fit(X_train, y_train)
+            preds = model_obj.predict(X_test)
+            acc = float(accuracy_score(y_test, preds))
+            metric_key, metric_val = "accuracy", round(acc, 4)
+        else:
+            model_obj = RandomForestRegressor(n_estimators=50, max_depth=6, random_state=42)
+            model_obj.fit(X_train, y_train)
+            preds = model_obj.predict(X_test)
+            r2 = float(r2_score(y_test, preds))
+            metric_key, metric_val = "r2_score", round(r2, 4)
+            
+        signature = infer_signature(X_train, y_train)
+        
+        with mlflow.start_run(run_name=f"train_{model_name}") as run:
+            mlflow.log_params({
+                "model_type": "RandomForest" + ("Classifier" if is_clf else "Regressor"),
+                "n_estimators": 50,
+                "max_depth": 6,
+                "n_samples": len(df),
+                "n_features": len(available)
+            })
+            mlflow.log_metric(metric_key, metric_val)
+            
+            mlflow.sklearn.log_model(
+                sk_model=model_obj,
+                artifact_path="model",
+                signature=signature,
+                registered_model_name=model_name
+            )
+            run_id = run.info.run_id
+            
+        from mlflow.tracking import MlflowClient
+        client = MlflowClient(tracking_uri=conn.url)
+        versions = client.search_model_versions(f"name='{model_name}'")
+        latest_version = versions[0].version if versions else "1"
+        
+    except Exception as e:
+        raise HTTPException(502, f"Failed to train & register model in MLflow: {e}")
+        
+    m = db.query(MLModel).filter(MLModel.mlflow_model_name == model_name).first()
+    if not m:
+        m = MLModel(
+            name=model_name,
+            framework="sklearn",
+            task_type=task_type,
+            version=latest_version,
+            description=f"Automatically trained and registered model: {model_name}",
+            owner="auto",
+            integration_id=integration_id,
+            target_table=target_table,
+            target_column=target_column,
+            feature_columns=available,
+            protected_attrs=protected_attrs,
+            status="active",
+            mlflow_server_url=conn.url,
+            mlflow_model_name=model_name,
+            mlflow_version=latest_version,
+            mlflow_stage="None"
+        )
+        db.add(m)
+    else:
+        m.task_type = task_type
+        m.version = latest_version
+        m.integration_id = integration_id
+        m.target_table = target_table
+        m.target_column = target_column
+        m.feature_columns = available
+        m.protected_attrs = protected_attrs
+        m.mlflow_server_url = conn.url
+        m.mlflow_version = latest_version
+        
+    db.commit()
+    db.refresh(m)
+    
+    run_scan_sync(int(getattr(m, 'id')), db)
+    return _model_out(m)
+
+
+
 # ── MLflow Connection ──────────────────────────────────────────────────────────
 
 @router.get("/connect")
@@ -526,6 +723,17 @@ def delete_ml_model(model_id: int, db: Session = Depends(get_db)):
     if not m:
         raise HTTPException(404, "Model not found")
     name = m.name
+    mlflow_model_name = m.mlflow_model_name
+    
+    # Try to delete from MLflow registry
+    if m.mlflow_server_url and mlflow_model_name:
+        try:
+            from mlflow.tracking import MlflowClient
+            client = MlflowClient(tracking_uri=m.mlflow_server_url)
+            client.delete_registered_model(name=mlflow_model_name)
+        except Exception as e:
+            print(f"Failed to delete model from MLflow registry: {e}")
+
     db.query(MLGovernanceScan).filter(MLGovernanceScan.model_id == model_id).delete()
     db.delete(m)
     db.commit()
@@ -783,6 +991,7 @@ def _download_mlflow_model(df: pd.DataFrame, feature_cols: list, target_col: str
         le = LabelEncoder()
         X[col] = le.fit_transform(X[col].astype(str))
     X = X.fillna(X.median(numeric_only=True)).fillna(0)
+    X = X.astype(float)
 
     task_type = ml_model.task_type or "classification"
     if target_col and target_col in df.columns:
@@ -816,6 +1025,30 @@ def _download_mlflow_model(df: pd.DataFrame, feature_cols: list, target_col: str
             proxy = mlflow.sklearn.load_model(f"runs:/{run_id}/model")
     except Exception:
         proxy = pyfunc_model
+
+    # Wrap predict and predict_proba to ensure they always receive a DataFrame with column names
+    proxy_any: Any = proxy
+    if proxy_any is not None:
+        if hasattr(proxy_any, "predict"):
+            original_predict = proxy_any.predict
+            def wrapped_predict(data, *args, **kwargs):
+                if not isinstance(data, pd.DataFrame):
+                    data = pd.DataFrame(data, columns=available)
+                else:
+                    # If columns are not correct or are integers, recreate DataFrame to enforce column schema
+                    data = pd.DataFrame(data.values, columns=available)
+                return original_predict(data, *args, **kwargs)
+            proxy_any.predict = wrapped_predict
+
+        if hasattr(proxy_any, "predict_proba"):
+            original_predict_proba = proxy_any.predict_proba
+            def wrapped_predict_proba(data, *args, **kwargs):
+                if not isinstance(data, pd.DataFrame):
+                    data = pd.DataFrame(data, columns=available)
+                else:
+                    data = pd.DataFrame(data.values, columns=available)
+                return original_predict_proba(data, *args, **kwargs)
+            proxy_any.predict_proba = wrapped_predict_proba
 
     run_metrics = {}
     try:
@@ -868,6 +1101,7 @@ def _train_proxy(df: pd.DataFrame, feature_cols: list, target_col: str | None,
         le = LabelEncoder()
         X[col] = le.fit_transform(X[col].astype(str))
     X = X.fillna(X.median(numeric_only=True)).fillna(0)
+    X = X.astype(float)
 
     task_type = ml_model.task_type or "classification"
 
@@ -888,7 +1122,21 @@ def _train_proxy(df: pd.DataFrame, feature_cols: list, target_col: str | None,
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
 
-    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    tracking_uri = None
+    try:
+        from src.core.database import SessionLocal
+        from src.domain.entities import MLflowConnection
+        db_s = SessionLocal()
+        conn = db_s.query(MLflowConnection).filter(MLflowConnection.status == "connected").first()
+        if conn:
+            tracking_uri = conn.url
+        db_s.close()
+    except Exception:
+        pass
+    if not tracking_uri:
+        tracking_uri = MLFLOW_TRACKING_URI
+
+    mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment("dataguard_ml_governance")
 
     with mlflow.start_run(run_name=f"governance_{ml_model.name}") as run:

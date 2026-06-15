@@ -58,6 +58,7 @@ class Integration(Base):
     username           = Column(String(100))
     password_encrypted = Column(Text)
     ssl_mode           = Column(String(20),  default="disable")
+    owner              = Column(String(100))
     created_at         = Column(DateTime(timezone=True), server_default=func.now())
     updated_at         = Column(DateTime(timezone=True), onupdate=func.now())
 

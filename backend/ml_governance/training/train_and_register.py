@@ -10,8 +10,8 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
 from sqlalchemy import create_engine
 
-MARIADB_URL = "mysql+pymysql://root:root123@localhost:3307/governance_db"
-MLFLOW_TRACKING_URI = "http://127.0.0.1:5000"
+MARIADB_URL = os.getenv("MARIADB_URL", "mysql+pymysql://root:root123@localhost:3307/governance_db")
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000")
 
 def train_and_register():
     print(f"🔗 Connecting to MariaDB database to load 'adult_income' table...")

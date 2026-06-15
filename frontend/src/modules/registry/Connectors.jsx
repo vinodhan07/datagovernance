@@ -2,14 +2,7 @@ import { useEffect, useState } from 'react'
 import { Plug, Loader, X, ChevronDown, ChevronRight, Pencil, CheckCircle } from 'lucide-react'
 import ConnectMariaDB from './ConnectMariaDB.jsx'
 import ConnectGitHub from './ConnectGitHub.jsx'
-import { getIntegrations } from '../../core/api.js'
-
-const BASE = 'http://localhost:8000'
-
-async function deleteIntegration(id) {
-  const res = await fetch(`${BASE}/connectors/integrations/${id}`, { method: 'DELETE' })
-  if (!res.ok && res.status !== 204) throw new Error('Failed to disconnect')
-}
+import { getIntegrations, deleteIntegration } from '../../core/api.js'
 
 // ── Section header (collapsible) ──────────────────────────────────────────────
 function SectionHeader({ title, open, onToggle, action }) {
