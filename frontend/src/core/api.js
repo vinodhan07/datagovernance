@@ -158,3 +158,26 @@ export const addComplianceCheck     = (id, data)=> request(`/ai-governance/model
 export const updateComplianceCheck  = (id, data)=> request(`/ai-governance/compliance/${id}`, { method: 'PUT', body: JSON.stringify(data) })
 export const deleteComplianceCheck  = (id)      => request(`/ai-governance/compliance/${id}`, { method: 'DELETE' })
 export const getAiGovernanceSummary = ()        => request('/ai-governance/summary')
+export const runAIScan              = (id)      => request(`/ai-governance/models/${id}/scan`, { method: 'POST' })
+export const runPlaygroundPrompt    = (id, data)=> request(`/ai-governance/models/${id}/playground`, { method: 'POST', body: JSON.stringify(data) })
+export const runSingleCheck         = (id)      => request(`/ai-governance/compliance/${id}/run`, { method: 'POST' })
+
+// ── ML Governance — Connection ─────────────────────────────────────────────────
+export const getMlflowConnection  = ()      => request('/ml-governance/connect')
+export const connectMlflow        = (data)  => request('/ml-governance/connect', { method: 'POST', body: JSON.stringify(data) })
+export const disconnectMlflow     = (id)    => request(`/ml-governance/connect/${id}`, { method: 'DELETE' })
+
+// ── ML Governance — Registry (live from MLflow) ────────────────────────────────
+export const getMlflowRegistry    = ()           => request('/ml-governance/registry')
+export const getMlflowVersions    = (modelName)  => request(`/ml-governance/registry/${encodeURIComponent(modelName)}/versions`)
+
+// ── ML Governance — Configured models & scans ─────────────────────────────────
+export const getMlModels     = ()            => request('/ml-governance/models')
+export const createMlModel   = (data)        => request('/ml-governance/models', { method: 'POST', body: JSON.stringify(data) })
+export const updateMlModel   = (id, data)    => request(`/ml-governance/models/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+export const deleteMlModel   = (id)          => request(`/ml-governance/models/${id}`, { method: 'DELETE' })
+export const getMlScans      = (modelId)     => request(`/ml-governance/models/${modelId}/scans`)
+export const getMlScan       = (scanId)      => request(`/ml-governance/scans/${scanId}`)
+export const getMlSummary    = ()            => request('/ml-governance/summary')
+export const getMlScanStream = (modelId)     => `${BASE}/ml-governance/models/${modelId}/scan`
+export const syncMlflowModels = ()           => request('/ml-governance/sync-and-scan', { method: 'POST' })

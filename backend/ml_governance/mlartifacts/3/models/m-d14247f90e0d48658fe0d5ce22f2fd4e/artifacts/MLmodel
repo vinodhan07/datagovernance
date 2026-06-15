@@ -1,0 +1,23 @@
+artifact_path: /home/vinodhan/Desktop/Project/DATA GOVERENCE/backend/ml_governance/mlartifacts/3/models/m-d14247f90e0d48658fe0d5ce22f2fd4e/artifacts
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.12.9
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.9.0
+    skops_trusted_types: null
+mlflow_version: 3.13.0
+model_id: m-d14247f90e0d48658fe0d5ce22f2fd4e
+model_size_bytes: 1065
+model_uuid: m-d14247f90e0d48658fe0d5ce22f2fd4e
+prompts: null
+run_id: cb92323c887f48f68e1b784320bf2d16
+utc_time_created: '2026-06-15 08:49:14.885393'

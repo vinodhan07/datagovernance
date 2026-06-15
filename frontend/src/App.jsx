@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
-import { LayoutGrid, Plug, Shield, BookOpen, ShieldCheck, Database, Brain, LogOut, User, X, CheckCircle } from 'lucide-react'
+import { LayoutGrid, Plug, Shield, BookOpen, ShieldCheck, Database, Brain, FlaskConical, LogOut, User, X, CheckCircle } from 'lucide-react'
 import Dashboard      from './views/Dashboard.jsx'
 import Connectors     from './modules/registry/Connectors.jsx'
 import DataGovernance from './views/Workspace.jsx'
 import AiGovernance   from './modules/guardian/AiGovernance.jsx'
+import MlGovernance   from './modules/guardian/MlGovernance.jsx'
 import Login          from './views/Login.jsx'
 import { AuthProvider, useAuth } from './context/AuthContext.jsx'
 import { getIntegrations } from './core/api.js'
@@ -13,6 +14,7 @@ const NAV = [
   { id: 'connectors',      label: 'Connectors',      Icon: Plug },
   { id: 'data-governance', label: 'Data Governance', Icon: Database },
   { id: 'ai-governance',   label: 'AI Governance',   Icon: Brain },
+  { id: 'ml-governance',   label: 'ML Governance',   Icon: FlaskConical },
 ]
 
 // ── Toast notification ────────────────────────────────────────────────────────
@@ -167,6 +169,7 @@ function AppShell() {
         {page === 'connectors'      && <Connectors />}
         {page === 'data-governance' && <DataGovernance onNavigate={setPage} />}
         {page === 'ai-governance'   && <AiGovernance />}
+        {page === 'ml-governance'   && <MlGovernance />}
       </main>
 
       {/* ── Welcome-back toast ── */}

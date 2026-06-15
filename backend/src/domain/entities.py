@@ -265,6 +265,8 @@ class AIModel(Base):
     uses_pii       = Column(Boolean, default=False)
     autonomous     = Column(Boolean, default=False)
     integration_id = Column(String(100))          # optional link to a connector's data source
+    api_key_encrypted = Column(Text)              # securely store LLM API key
+    endpoint_url   = Column(String(255))          # e.g. https://api.groq.com/openai/v1
     created_at     = Column(DateTime(timezone=True), server_default=func.now())
     updated_at     = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -280,3 +282,62 @@ class AIComplianceCheck(Base):
     notes        = Column(Text)
     checked_at   = Column(DateTime(timezone=True))
     created_at   = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ML Governance
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class MLflowConnection(Base):
+    """Saved MLflow tracking server connection."""
+    __tablename__ = "mlflow_connections"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    url        = Column(String(500), nullable=False)
+    alias      = Column(String(100), default="default")
+    status     = Column(String(20), default="connected")   # connected | error
+    error_msg  = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class MLModel(Base):
+    """Registered ML models for bias/drift/explainability governance."""
+    __tablename__ = "ml_models"
+
+    id                = Column(Integer, primary_key=True, autoincrement=True)
+    name              = Column(String(255), nullable=False)
+    framework         = Column(String(100))    # sklearn | pytorch | tensorflow | custom
+    task_type         = Column(String(50))     # classification | regression | clustering
+    version           = Column(String(50))
+    description       = Column(Text)
+    owner             = Column(String(255))
+    integration_id    = Column(String(100))   # linked connector (data source)
+    target_table      = Column(String(255))   # table containing training/eval data
+    target_column     = Column(String(255))   # label / prediction column
+    feature_columns   = Column(JSON)          # list of feature column names
+    protected_attrs   = Column(JSON)          # list of protected attribute columns for bias
+    status            = Column(String(20), default="active")   # active | archived
+    mlflow_server_url = Column(String(500))   # MLflow server this model came from
+    mlflow_model_name = Column(String(255))   # name in MLflow registry
+    mlflow_version    = Column(String(50))    # model version to use for scan
+    mlflow_stage      = Column(String(50))    # None / Staging / Production / Archived
+    created_at        = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class MLGovernanceScan(Base):
+    """One governance scan run covering bias, drift, explainability, transparency."""
+    __tablename__ = "ml_governance_scans"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    model_id      = Column(Integer, nullable=False)
+    scan_type     = Column(String(50), default="all")   # bias | drift | explainability | all
+    status        = Column(String(20), default="running")  # running | completed | failed
+    bias_results  = Column(JSON)
+    drift_results = Column(JSON)
+    shap_results  = Column(JSON)
+    model_card    = Column(JSON)
+    mlflow_run_id = Column(String(255))
+    error_message = Column(Text)
+    started_at    = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at  = Column(DateTime(timezone=True))

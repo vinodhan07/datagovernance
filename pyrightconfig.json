@@ -1,13 +1,8 @@
 {
-  "executionEnvironments": [
-    {
-      "root": "backend",
-      "venvPath": "backend",
-      "venv": ".venv",
-      "extraPaths": [
-        "backend/.venv/lib/python3.12/site-packages",
-        "backend"
-      ]
-    }
+  "venvPath": "backend",
+  "venv": ".venv",
+  "extraPaths": [
+    "backend/src",
+    "backend"
   ]
 }

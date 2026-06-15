@@ -48,6 +48,9 @@ JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "24"))
 OPENMETADATA_URL       = os.getenv("OPENMETADATA_URL",       "http://localhost:8585/api")
 OPENMETADATA_JWT_TOKEN = os.getenv("OPENMETADATA_JWT_TOKEN", "")
 
+# ── MLflow Tracking Server ───────────────────────────────────────────────────
+MLFLOW_TRACKING_URI    = os.getenv("MLFLOW_TRACKING_URI",    "http://localhost:5000")
+
 # ── Spline consumer polling ───────────────────────────────────────────────────
 SPLINE_POLL_RETRIES = int(os.getenv("SPLINE_CONSUMER_POLL_RETRIES", "6"))
 SPLINE_POLL_DELAY   = float(os.getenv("SPLINE_CONSUMER_POLL_DELAY", "2.0"))

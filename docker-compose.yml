@@ -134,6 +134,17 @@ services:
       AIRFLOW_HOST: http://localhost:8080
       SERVER_HOST_API_URL: http://localhost:8585/api
 
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.13.0
+    container_name: mlflow-server
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - /home/vinodhan/Desktop/Project/DATA GOVERENCE:/home/vinodhan/Desktop/Project/DATA GOVERENCE
+    working_dir: /home/vinodhan/Desktop/Project/DATA GOVERENCE
+    command: ["mlflow", "server", "--backend-store-uri", "sqlite:////home/vinodhan/Desktop/Project/DATA GOVERENCE/backend/ml_governance/mlflow.db", "--default-artifact-root", "/home/vinodhan/Desktop/Project/DATA GOVERENCE/backend/ml_governance/mlartifacts", "--host", "0.0.0.0", "--port", "5000"]
+
 volumes:
   postgres_data:
   mariadb_data:

@@ -5,7 +5,7 @@ from src.core import auth
 from src.modules.observer import audit
 from src.modules.registry import catalog, connectors
 from src.modules.nexus import lineage, pipeline
-from src.modules.guardian import quality, ai_governance
+from src.modules.guardian import quality, ai_governance, ml_governance
 
 app = FastAPI(title="DataGuard ETL Lineage Platform")
 
@@ -25,6 +25,7 @@ app.include_router(lineage.router,    prefix="/lineage",    tags=["Lineage"])
 app.include_router(pipeline.router,   prefix="/pipeline",   tags=["Pipeline"])
 app.include_router(quality.router,    prefix="/quality",    tags=["Quality"])
 app.include_router(ai_governance.router, prefix="/ai-governance", tags=["AI Governance"])
+app.include_router(ml_governance.router, prefix="/ml-governance", tags=["ML Governance"])
 
 
 @app.get("/")
@@ -77,6 +78,7 @@ async def dashboard_stats():
     }
 
 
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("src.main:app", host="0.0.0.0", port=8000, reload=True)
